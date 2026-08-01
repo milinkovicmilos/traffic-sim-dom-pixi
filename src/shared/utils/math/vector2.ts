@@ -32,4 +32,12 @@ export class Vector2 implements Equatable<Vector2> {
     distanceTo(other: Vector2): number {
         return Math.hypot(other.x - this.x, other.y - this.y);
     }
+
+    unitVectorTo(other: Vector2): Vector2 {
+        if (this.equals(other)) {
+            throw new Error('Cannot calculate unit vector for two of the same points');
+        }
+
+        return other.subtract(this).divideByScalar(this.distanceTo(other));
+    }
 }
