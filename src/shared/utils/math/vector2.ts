@@ -15,6 +15,10 @@ export class Vector2 {
         return new Vector2(this.x - other.x, this.y - other.y);
     }
 
+    divideByScalar(value: number): Vector2 {
+        return new Vector2(this.x / value, this.y / value);
+    }
+
     distanceTo(other: Vector2): number {
         return Math.hypot(other.x - this.x, other.y - this.y);
     }
