@@ -1,5 +1,9 @@
 export interface TrafficLightConfig {
-    greenDuration: number;
-    yellowDuration: number;
+    northSouthGreenDuration: number;
+    northSouthYellowDuration: number;
+
+    eastWestGreenDuration: number;
+    eastWestYellowDuration: number;
+
     allRedDuration: number;
 }
