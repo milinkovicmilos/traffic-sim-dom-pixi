@@ -3,16 +3,22 @@ import { MathUtils } from '@shared/utils/math/math-utils';
 import type { Vector2 } from '@shared/utils/math/vector2';
 
 export class Lane {
+    private readonly id: number;
     private readonly start: Vector2;
     private readonly end: Vector2;
 
-    constructor(start: Vector2, end: Vector2) {
+    constructor(id: number, start: Vector2, end: Vector2) {
         if (start.equals(end)) {
             throw new Error('The start and the end of the lane cannot be in the same point');
         }
 
+        this.id = id;
         this.start = start;
         this.end = end;
+    }
+
+    getId(): number {
+        return this.id;
     }
 
     getLength(): number {
