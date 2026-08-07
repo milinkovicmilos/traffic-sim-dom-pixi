@@ -1,15 +1,19 @@
 import type { Vector2 } from '@shared/utils/math/vector2';
 import type { Road } from './road';
+import type { Lane } from './lane';
 
 export class Intersection {
     private readonly id: number;
     private readonly position: Vector2;
-    private readonly incomingRoads: Road[];
-    private readonly outgoingRoads: Road[];
+    private readonly roads: Road[] = [];
 
     constructor(id: number, position: Vector2) {
         this.id = id;
         this.position = position;
+    }
+
+    equals(other: Intersection): boolean {
+        return this.getPosition().equals(other.getPosition());
     }
 
     getId(): number {
@@ -20,17 +24,32 @@ export class Intersection {
         return this.position;
     }
 
-    /**
-     * Add incoming road to the intersection
-     */
-    addIncomingRoad(road: Road): void {
-        this.incomingRoads.push(road);
+    getRoads(): Road[] {
+        return this.roads;
     }
 
     /**
-     * Add outgoing road to the intersection
+     * Add a road to the intersection
      */
-    addOutgoingRoad(road: Road): void {
-        this.outgoingRoads.push(road);
+    addRoad(road: Road): void {
+        this.roads.push(road);
+    }
+
+    /**
+     * Returns the incoming lanes to this intersection as readonly array
+     */
+    getIncomingLanes(): readonly Lane[] {
+        return this.roads
+            .flatMap((road) => [road.getFordwardLane(), road.getBackwardLane()])
+            .filter((lane) => lane.getEndIntersection() === this);
+    }
+
+    /**
+     * Returns the outgoing lanes from this intersection as readonly array
+     */
+    getOutgoingLanes(): readonly Lane[] {
+        return this.roads
+            .flatMap((road) => [road.getFordwardLane(), road.getBackwardLane()])
+            .filter((lane) => lane.getStartIntersection() === this);
     }
 }
