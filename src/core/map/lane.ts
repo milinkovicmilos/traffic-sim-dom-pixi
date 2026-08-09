@@ -1,41 +1,41 @@
 import { Angle } from '@shared/utils/math/angle';
 import { MathUtils } from '@shared/utils/math/math-utils';
 import type { Vector2 } from '@shared/utils/math/vector2';
-import type { Intersection } from './intersection';
+import type { RoadNode } from './road-node';
 
 export class Lane {
     private readonly id: number;
-    private readonly startIntersection: Intersection;
-    private readonly endIntersection: Intersection;
+    private readonly startNode: RoadNode;
+    private readonly endNode: RoadNode;
 
-    constructor(id: number, start: Intersection, end: Intersection) {
+    constructor(id: number, start: RoadNode, end: RoadNode) {
         if (start.equals(end)) {
-            throw new Error('Lane can not start and end on the same intersection');
+            throw new Error('Lane can not start and end on the same node');
         }
 
         this.id = id;
-        this.startIntersection = start;
-        this.endIntersection = end;
+        this.startNode = start;
+        this.endNode = end;
     }
 
     getId(): number {
         return this.id;
     }
 
-    getStartIntersection(): Intersection {
-        return this.startIntersection;
+    getStartNode(): RoadNode {
+        return this.startNode;
     }
 
     getStartPosition(): Vector2 {
-        return this.startIntersection.getPosition();
+        return this.startNode.getPosition();
     }
 
-    getEndIntersection(): Intersection {
-        return this.endIntersection;
+    getEndNode(): RoadNode {
+        return this.endNode;
     }
 
     getEndPosition(): Vector2 {
-        return this.endIntersection.getPosition();
+        return this.endNode.getPosition();
     }
 
     /**

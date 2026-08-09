@@ -1,49 +1,40 @@
-import type { Intersection } from './intersection';
 import type { Road } from './road';
 import type { Lane } from './lane';
+import type { RoadNode } from './road-node';
 
 /**
- * Represents the state of the whole map containing all the lanes, roads and intersections
+ * Represents the state of the whole map containing all nodes, lanes and roads
  */
 export class RoadMap {
-    private readonly intersections: Intersection[];
-    private readonly roads: Road[];
+    private readonly nodes: RoadNode[];
     private readonly lanes: Lane[];
+    private readonly roads: Road[];
 
-    constructor(intersections: Intersection[], roads: Road[], lanes: Lane[]) {
-        this.intersections = intersections;
+    constructor(nodes: RoadNode[], roads: Road[], lanes: Lane[]) {
+        this.nodes = nodes;
         this.roads = roads;
         this.lanes = lanes;
     }
 
-    getIntersections(): Intersection[] {
-        return this.intersections;
+    getNodes(): readonly RoadNode[] {
+        return this.nodes;
     }
 
-    getRoads(): Road[] {
-        return this.roads;
-    }
-
-    getLanes(): Lane[] {
+    getLanes(): readonly Lane[] {
         return this.lanes;
     }
 
-    /**
-     * Returns the intersection with given id on the map
-     *
-     * @param {number} id - Intersection with this id to look for
-     */
-    getIntersection(id: number): Intersection | undefined {
-        return this.intersections.find((intersection) => intersection.getId() === id);
+    getRoads(): readonly Road[] {
+        return this.roads;
     }
 
     /**
-     * Returns the road with the given id on the map
+     * Returns the road node with given id on the map
      *
-     * @param {number} id - Road with this id to look for
+     * @param {number} id - Road node with this id to look for
      */
-    getRoad(id: number): Road | undefined {
-        return this.roads.find((road) => road.getId() === id);
+    getNode(id: number): RoadNode | undefined {
+        return this.nodes.find((node) => node.getId() === id);
     }
 
     /**
@@ -53,5 +44,14 @@ export class RoadMap {
      */
     getLane(id: number): Lane | undefined {
         return this.lanes.find((lane) => lane.getId() === id);
+    }
+
+    /**
+     * Returns the road with the given id on the map
+     *
+     * @param {number} id - Road with this id to look for
+     */
+    getRoad(id: number): Road | undefined {
+        return this.roads.find((road) => road.getId() === id);
     }
 }

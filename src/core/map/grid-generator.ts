@@ -1,9 +1,10 @@
-import type { GridConfig } from '@shared/config/grid-config';
-import { RoadMap } from './road-map';
-import { Intersection } from './intersection';
-import { Vector2 } from '@shared/utils/math/vector2';
-import { Road } from './road';
 import { Lane } from './lane';
+import { Road } from './road';
+import { RoadNode } from './road-node';
+import { NodeType } from './node-type';
+import { RoadMap } from './road-map';
+import { Vector2 } from '@shared/utils/math/vector2';
+import type { GridConfig } from '@shared/config/grid-config';
 
 export class GridGenerator {
     private readonly config: GridConfig;
@@ -16,22 +17,22 @@ export class GridGenerator {
      * Generates a random road map
      */
     generate(): RoadMap {
-        const intersections = this.createIntersections();
+        const nodes = this.createNodes();
 
         const roads: Road[] = [];
         const lanes: Lane[] = [];
 
-        this.createHorizontalRoads(intersections, roads, lanes);
-        this.createVerticalRoads(intersections, roads, lanes);
+        this.createHorizontalRoads(nodes, roads, lanes);
+        this.createVerticalRoads(nodes, roads, lanes);
 
-        return new RoadMap(intersections, roads, lanes);
+        return new RoadMap(nodes, roads, lanes);
     }
 
     /**
      * Generates intersections for every row and column on the map
      */
-    private createIntersections(): Intersection[] {
-        const intersections: Intersection[] = [];
+    private createNodes(): RoadNode[] {
+        const nodes: RoadNode[] = [];
 
         let id = 0;
 
@@ -42,27 +43,50 @@ export class GridGenerator {
                     row * this.config.blockSize,
                 );
 
-                intersections.push(new Intersection(id++, position));
+                const type = this.getNodeType(row, column);
+
+                nodes.push(new RoadNode(id++, position, type));
             }
         }
 
-        return intersections;
+        return nodes;
     }
 
     /**
-     * Generates the horizontal roads for all given intersections
+     * Determines the type of node based on its position in a grid
      */
-    private createHorizontalRoads(
-        intersections: Intersection[],
-        roads: Road[],
-        lanes: Lane[],
-    ): void {
+    private getNodeType(row: number, column: number): NodeType {
+        const isTop = row === 0;
+        const isBottom = row === this.config.rows - 1;
+
+        const isLeft = column === 0;
+        const isRight = column === this.config.columns - 1;
+
+        const isCorner = (isTop || isBottom) && (isLeft || isRight);
+
+        if (isCorner) {
+            return NodeType.Corner;
+        }
+
+        const isEdge = isTop || isBottom || isLeft || isRight;
+
+        if (isEdge) {
+            return NodeType.TJunction;
+        }
+
+        return NodeType.FourWayIntersection;
+    }
+
+    /**
+     * Generates the horizontal roads for all given nodes
+     */
+    private createHorizontalRoads(nodes: RoadNode[], roads: Road[], lanes: Lane[]): void {
         for (let row = 0; row < this.config.rows; row++) {
             for (let column = 0; column < this.config.columns - 1; column++) {
-                const intersectionA = this.getIntersection(intersections, row, column);
-                const intersectionB = this.getIntersection(intersections, row, column + 1);
+                const nodeA = this.getNode(nodes, row, column);
+                const nodeB = this.getNode(nodes, row, column + 1);
 
-                const road = this.createRoad(intersectionA, intersectionB, roads.length, lanes);
+                const road = this.createRoad(nodeA, nodeB, roads.length, lanes);
 
                 roads.push(road);
             }
@@ -70,48 +94,45 @@ export class GridGenerator {
     }
 
     /**
-     * Generates the vertical roads for all given intersections
+     * Generates the vertical roads for all given nodes
      */
-    private createVerticalRoads(intersections: Intersection[], roads: Road[], lanes: Lane[]): void {
+    private createVerticalRoads(nodes: RoadNode[], roads: Road[], lanes: Lane[]): void {
         for (let row = 0; row < this.config.rows - 1; row++) {
             for (let column = 0; column < this.config.columns; column++) {
-                const intersectionA = this.getIntersection(intersections, row, column);
-                const intersectionB = this.getIntersection(intersections, row + 1, column);
+                const nodeA = this.getNode(nodes, row, column);
+                const nodeB = this.getNode(nodes, row + 1, column);
 
-                const road = this.createRoad(intersectionA, intersectionB, roads.length, lanes);
+                const road = this.createRoad(nodeA, nodeB, roads.length, lanes);
 
                 roads.push(road);
             }
         }
     }
 
-    private createRoad(
-        intersectionA: Intersection,
-        intersectionB: Intersection,
-        roadId: number,
-        lanes: Lane[],
-    ): Road {
-        const forwardLane = new Lane(lanes.length, intersectionA, intersectionB);
+    /**
+     * Creates a two-way road between two nodes
+     */
+    private createRoad(nodeA: RoadNode, nodeB: RoadNode, roadId: number, lanes: Lane[]): Road {
+        const forwardLane = new Lane(lanes.length, nodeA, nodeB);
         lanes.push(forwardLane);
 
-        const backwardLane = new Lane(lanes.length, intersectionB, intersectionA);
+        const backwardLane = new Lane(lanes.length, nodeB, nodeA);
         lanes.push(backwardLane);
 
-        const road = new Road(roadId, intersectionA, intersectionB, forwardLane, backwardLane);
+        const road = new Road(roadId, nodeA, nodeB, forwardLane, backwardLane);
 
-        intersectionA.addRoad(road);
-        intersectionB.addRoad(road);
+        nodeA.addRoad(road);
+        nodeB.addRoad(road);
 
         return road;
     }
 
-    private getIntersection(
-        intersections: Intersection[],
-        row: number,
-        column: number,
-    ): Intersection {
+    /**
+     * Gets a node from a flattened node array
+     */
+    private getNode(nodes: RoadNode[], row: number, column: number): RoadNode {
         const index = row * this.config.columns + column;
 
-        return intersections[index];
+        return nodes[index];
     }
 }

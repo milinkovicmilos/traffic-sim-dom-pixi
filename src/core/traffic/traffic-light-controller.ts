@@ -1,5 +1,5 @@
 import type { TrafficLightConfig } from '@shared/config/traffic-light-config';
-import type { TrafficLightPhase } from './traffic-light-phase';
+import { TrafficLightPhase } from './traffic-light-phase';
 
 export class TrafficLightController {
     private readonly config: TrafficLightConfig;
