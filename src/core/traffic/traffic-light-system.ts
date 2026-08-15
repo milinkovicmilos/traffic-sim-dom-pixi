@@ -1,8 +1,9 @@
 import type { RoadNode } from '@core/map/road-node';
 import type { TrafficLightController } from './traffic-light-controller';
+import type { Movement } from './movement';
 
 export class TrafficLightSystem {
-    private readonly controllers = new Map<number, TrafficLightController>();
+    private readonly controllers = new Map<RoadNode['id'], TrafficLightController>();
 
     /**
      * Adds a traffic light controller to a given node
@@ -27,5 +28,16 @@ export class TrafficLightSystem {
      */
     getController(nodeId: number): TrafficLightController | undefined {
         return this.controllers.get(nodeId);
+    }
+
+    allowsMovement(nodeId: RoadNode['id'], movement: Movement): boolean {
+        const controller = this.getController(nodeId);
+
+        // If there is no controller for this road node it means that it is not an intersection, so we allow it
+        if (!controller) {
+            return true;
+        }
+
+        return controller.allowsMovement(movement);
     }
 }
