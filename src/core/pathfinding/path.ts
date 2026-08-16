@@ -1,6 +1,8 @@
 import type { Lane } from '@core/map/lane';
 import type { Movement } from '@core/traffic/movement';
 import { PathLocation } from './pathlocation';
+import type { Vector2 } from '@shared/utils/math/vector2';
+import { MathUtils } from '@shared/utils/math/math-utils';
 
 export class Path {
     private readonly startLocation: PathLocation;
@@ -76,5 +78,54 @@ export class Path {
         totalLength += this.endLocation.getDistance();
 
         return totalLength;
+    }
+
+    /**
+     * Returns the point of the vehicle based on its distance traveled along this path
+     *
+     * @param {number} distance - The distance that the vehicle has traveled along this path
+     */
+    getPositionAtDistance(distance: number): Vector2 {
+        const totalLength = this.getTotalLength();
+
+        const clampedDistance = MathUtils.clamp(0, distance, totalLength);
+
+        if (this.lanes.length === 1) {
+            const lane = this.lanes[0];
+
+            const laneDistance = this.startLocation.getDistance() + clampedDistance;
+
+            return lane.getPosition(laneDistance);
+        }
+
+        let remainingDistance = clampedDistance;
+
+        // Distance available on the first lane.
+        const firstLane = this.lanes[0];
+
+        const firstLaneDistance = firstLane.getLength() - this.startLocation.getDistance();
+
+        if (remainingDistance <= firstLaneDistance) {
+            return firstLane.getPosition(this.startLocation.getDistance() + remainingDistance);
+        }
+
+        remainingDistance -= firstLaneDistance;
+
+        // Intermediate lanes.
+        for (let i = 1; i < this.lanes.length - 1; i++) {
+            const lane = this.lanes[i];
+            const laneLength = lane.getLength();
+
+            if (remainingDistance <= laneLength) {
+                return lane.getPosition(remainingDistance);
+            }
+
+            remainingDistance -= laneLength;
+        }
+
+        // Final lane.
+        const finalLane = this.lanes[this.lanes.length - 1];
+
+        return finalLane.getPosition(Math.min(remainingDistance, this.endLocation.getDistance()));
     }
 }
