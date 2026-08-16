@@ -55,11 +55,11 @@ export class Lane {
     }
 
     /**
-     * Returns the point along the lane from start with the given distance
+     * Returns the position along the lane from start with the given distance
      *
      * @param {number} distance - Distance from the start of the lane
      */
-    getPoint(distance: number): Vector2 {
+    getPosition(distance: number): Vector2 {
         const laneLength = this.getLength();
 
         // Clamp distance so vehicles don't move outside [0, laneLength]

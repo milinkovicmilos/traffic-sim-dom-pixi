@@ -27,6 +27,6 @@ export class PathLocation {
     }
 
     getPoint(): Vector2 {
-        return this.lane.getPoint(this.distance);
+        return this.lane.getPosition(this.distance);
     }
 }
