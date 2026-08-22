@@ -39,7 +39,8 @@ export class Vehicle {
      * @param deltaTime Time since the last update
      */
     update(deltaTime: number): void {
-        this.travelledDistance += this.speed * deltaTime;
+        // Since the speed is defined as units/second, we need to convert the deltaTime to seconds
+        this.travelledDistance += (this.speed * deltaTime) / 1000;
 
         this.travelledDistance = Math.min(this.travelledDistance, this.path.getTotalLength());
     }
