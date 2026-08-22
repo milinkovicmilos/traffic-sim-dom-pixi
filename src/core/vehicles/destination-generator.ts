@@ -7,7 +7,7 @@ export class DestinationGenerator {
 
     private readonly lanes: readonly Lane[];
 
-    constructor(lanes: Lane[]) {
+    constructor(lanes: readonly Lane[]) {
         this.lanes = lanes;
     }
 

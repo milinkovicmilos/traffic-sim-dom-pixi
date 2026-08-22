@@ -9,7 +9,11 @@ export class VehicleSpawner {
     private readonly pathfinder: Pathfinder;
     private readonly destinationGenerator: DestinationGenerator;
 
-    constructor(lanes: Lane[], pathfinder: Pathfinder, destinationGenerator: DestinationGenerator) {
+    constructor(
+        lanes: readonly Lane[],
+        pathfinder: Pathfinder,
+        destinationGenerator: DestinationGenerator,
+    ) {
         this.lanes = lanes;
         this.pathfinder = pathfinder;
         this.destinationGenerator = destinationGenerator;
@@ -21,6 +25,9 @@ export class VehicleSpawner {
         const destination = this.destinationGenerator.generate(start);
 
         const path = this.pathfinder.findPath(start, destination);
+        console.log(this.pathfinder);
+        console.log(this.lanes);
+        console.log(destination);
 
         if (path === null) {
             throw new Error('Failed to find a path for spawned vehicle.');

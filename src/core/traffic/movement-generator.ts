@@ -2,7 +2,7 @@ import { RoadNode } from '@core/map/road-node';
 import { Movement } from './movement';
 
 export class MovementGenerator {
-    generate(node: RoadNode): Movement[] {
+    generate(node: RoadNode): readonly Movement[] {
         const incomingLanes = node.getIncomingLanes();
         const outgoingLanes = node.getOutgoingLanes();
 
