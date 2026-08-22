@@ -1,4 +1,6 @@
 export class MathUtils {
+    static readonly epsilon = 0.001;
+
     /**
      * Clamps a value between a minimum and maximum threshold.
      */
