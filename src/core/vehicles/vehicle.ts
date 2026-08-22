@@ -1,5 +1,8 @@
 import type { Path } from '@core/pathfinding/path';
-import type { Vector2 } from '@shared/utils/math/vector2';
+import { Vector2 } from '@shared/utils/math/vector2';
+import type { VehicleState } from './vehicle-state';
+import { MathUtils } from '@shared/utils/math/math-utils';
+import { Angle } from '@shared/utils/math/angle';
 
 export class Vehicle {
     private path: Path;
@@ -9,6 +12,13 @@ export class Vehicle {
     constructor(path: Path, speed: number) {
         this.path = path;
         this.speed = speed;
+    }
+
+    getState(): VehicleState {
+        return {
+            position: this.getPosition(),
+            angle: this.getAngle(),
+        };
     }
 
     getPath(): Path {
@@ -52,5 +62,25 @@ export class Vehicle {
      */
     getPosition(): Vector2 {
         return this.path.getPositionAtDistance(this.travelledDistance);
+    }
+
+    /**
+     * Returns the vehicles angle (rotation)
+     */
+    getAngle(): number {
+        const distance = this.getTravelledDistance();
+        const totalLength = this.path.getTotalLength();
+
+        const epsilon = 0.001;
+
+        const currentDistance = MathUtils.clamp(distance, 0, totalLength - epsilon);
+
+        const currentPosition = this.path.getPositionAtDistance(currentDistance);
+
+        const nextPosition = this.path.getPositionAtDistance(
+            Math.min(currentDistance + epsilon, totalLength),
+        );
+
+        return Angle.fromVector(nextPosition.subtract(currentPosition));
     }
 }
