@@ -71,14 +71,12 @@ export class Vehicle {
         const distance = this.getTravelledDistance();
         const totalLength = this.path.getTotalLength();
 
-        const epsilon = 0.001;
-
-        const currentDistance = MathUtils.clamp(distance, 0, totalLength - epsilon);
+        const currentDistance = MathUtils.clamp(distance, 0, totalLength - MathUtils.epsilon);
 
         const currentPosition = this.path.getPositionAtDistance(currentDistance);
 
         const nextPosition = this.path.getPositionAtDistance(
-            Math.min(currentDistance + epsilon, totalLength),
+            Math.min(currentDistance + MathUtils.epsilon, totalLength),
         );
 
         return Angle.fromVector(nextPosition.subtract(currentPosition));
