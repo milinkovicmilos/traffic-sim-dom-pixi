@@ -1,13 +1,62 @@
-import type { Vehicle } from '@core/vehicles/vehicle';
-import type { VehicleSpawner } from '@core/vehicles/vehicle-spawner';
+import { GridGenerator } from '@core/map/grid-generator';
+import { RoadMap } from '@core/map/road-map';
+import type { RoadNode } from '@core/map/road-node';
+import { Pathfinder } from '@core/pathfinding/pathfinder';
+import { Movement } from '@core/traffic/movement';
+import { MovementGenerator } from '@core/traffic/movement-generator';
+import { TrafficLightController } from '@core/traffic/traffic-light-controller';
+import { TrafficLightPhaseFactory } from '@core/traffic/traffic-light-phase-factory';
+import { TrafficLightSystem } from '@core/traffic/traffic-light-system';
+import { DestinationGenerator } from '@core/vehicles/destination-generator';
+import { Vehicle } from '@core/vehicles/vehicle';
+import { VehicleSpawner } from '@core/vehicles/vehicle-spawner';
 import type { VehicleState } from '@core/vehicles/vehicle-state';
+import type { SimulationConfig } from '@shared/config/simulation-config';
 
 export class Simulation {
-    private readonly vehicles: Vehicle[] = [];
+    private readonly config: SimulationConfig;
+
+    private readonly roadMap: RoadMap;
+    private readonly movements: Map<RoadNode['id'], readonly Movement[]>;
+
+    private readonly trafficLightSystem: TrafficLightSystem;
+    private readonly pathfinder: Pathfinder;
+    private readonly destinationGenerator: DestinationGenerator;
     private readonly vehicleSpawner: VehicleSpawner;
 
-    constructor(vehicleSpawner: VehicleSpawner) {
-        this.vehicleSpawner = vehicleSpawner;
+    private readonly vehicles: Vehicle[] = [];
+
+    constructor(config: SimulationConfig) {
+        this.config = config;
+
+        this.roadMap = this.createRoadMap();
+
+        this.movements = this.createMovements(this.roadMap);
+
+        this.trafficLightSystem = this.createTrafficLightSystem(this.roadMap);
+
+        this.pathfinder = new Pathfinder(this.getMovementsArray());
+
+        this.destinationGenerator = new DestinationGenerator(this.roadMap.getLanes());
+
+        this.vehicleSpawner = new VehicleSpawner(
+            this.roadMap.getLanes(),
+            this.pathfinder,
+            this.destinationGenerator,
+        );
+
+        this.spawnVehicles(this.config.vehicles.count);
+    }
+
+    /**
+     * Triggers the update method on every system
+     */
+    update(deltaTime: number): void {
+        this.trafficLightSystem.update(deltaTime);
+
+        for (const vehicle of this.vehicles) {
+            vehicle.update(deltaTime);
+        }
     }
 
     /**
@@ -30,13 +79,95 @@ export class Simulation {
         }
     }
 
-    /**
-     * Triggers the update method on every vehicle
-     */
-    update(deltaTime: number): void {
-        for (const vehicle of this.vehicles) {
-            vehicle.update(deltaTime);
+    private createRoadMap(): RoadMap {
+        const generator = new GridGenerator({
+            rows: this.config.grid.rows,
+            columns: this.config.grid.columns,
+            blockSize: this.config.grid.blockSize,
+        });
+
+        return generator.generate();
+    }
+
+    private createMovements(roadMap: RoadMap): Map<RoadNode['id'], readonly Movement[]> {
+        const map = new Map<RoadNode['id'], readonly Movement[]>();
+        const generator = new MovementGenerator();
+
+        for (const node of roadMap.getNodes()) {
+            map.set(node.getId(), generator.generate(node));
         }
+
+        return map;
+    }
+
+    private createTrafficLightSystem(roadMap: RoadMap): TrafficLightSystem {
+        const trafficLightSystem = new TrafficLightSystem();
+
+        const trafficLightPhaseFactory = new TrafficLightPhaseFactory(
+            this.config.trafficLightsPhase,
+        );
+
+        for (const node of roadMap.getNodes()) {
+            const nodeId = node.getId();
+
+            const nodeMovements = this.getMovements(nodeId);
+            if (!nodeMovements) {
+                throw new Error(`Could not find the movements for node with id ${nodeId}`);
+            }
+
+            const phases = trafficLightPhaseFactory.createForNode(node, nodeMovements);
+
+            // If the node is not an intersection
+            if (phases.length === 0) {
+                continue;
+            }
+
+            const totalLightsDurationCycle =
+                this.config.trafficLightsPhase.greenDuration +
+                this.config.trafficLightsPhase.yellowDuration +
+                this.config.trafficLightsPhase.allRedDuration;
+            const initialTime = Math.floor(Math.random() * totalLightsDurationCycle);
+
+            const controller = new TrafficLightController(phases, initialTime);
+
+            trafficLightSystem.add(node, controller);
+        }
+
+        return trafficLightSystem;
+    }
+
+    getRoadMap(): RoadMap {
+        return this.roadMap;
+    }
+
+    getMovementsMap(): Map<RoadNode['id'], readonly Movement[]> {
+        return this.movements;
+    }
+
+    getMovementsArray(): readonly Movement[] {
+        const out: Movement[] = [];
+
+        for (const nodeMovements of this.movements.values()) {
+            out.push(...nodeMovements);
+        }
+
+        return out;
+    }
+
+    getMovements(roadNodeId: RoadNode['id']): readonly Movement[] | undefined {
+        return this.movements.get(roadNodeId);
+    }
+
+    getVehicles(): readonly Vehicle[] {
+        return this.vehicles;
+    }
+
+    getTrafficLightSystem(): TrafficLightSystem {
+        return this.trafficLightSystem;
+    }
+
+    getPathfinder(): Pathfinder {
+        return this.pathfinder;
     }
 
     /**
