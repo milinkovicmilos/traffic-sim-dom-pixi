@@ -81,11 +81,7 @@ export class Simulation {
     }
 
     private createRoadMap(): RoadMap {
-        const generator = new GridGenerator({
-            rows: this.config.grid.rows,
-            columns: this.config.grid.columns,
-            blockSize: this.config.grid.blockSize,
-        });
+        const generator = new GridGenerator(this.config.grid);
 
         return generator.generate();
     }
