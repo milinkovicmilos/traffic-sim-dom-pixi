@@ -44,6 +44,7 @@ export class Simulation {
             this.pathfinder,
             this.destinationGenerator,
             this.config.vehicles,
+            this.trafficLightSystem,
         );
 
         this.spawnVehicles(this.config.vehicles.count);
