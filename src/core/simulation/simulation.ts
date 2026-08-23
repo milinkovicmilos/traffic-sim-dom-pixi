@@ -43,6 +43,7 @@ export class Simulation {
             this.roadMap.getLanes(),
             this.pathfinder,
             this.destinationGenerator,
+            this.config.vehicles,
         );
 
         this.spawnVehicles(this.config.vehicles.count);
