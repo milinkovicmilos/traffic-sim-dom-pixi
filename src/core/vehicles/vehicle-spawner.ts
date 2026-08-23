@@ -5,6 +5,7 @@ import type { Lane } from '@core/map/lane';
 import { PathLocation } from '@core/pathfinding/pathlocation';
 import type { VehicleConfig } from '@shared/config/vehicle-config';
 import type { TrafficLightSystem } from '@core/traffic/traffic-light-system';
+import type { VehicleDetector } from './vehicle-detector';
 
 export class VehicleSpawner {
     private readonly lanes: readonly Lane[];
@@ -12,6 +13,7 @@ export class VehicleSpawner {
     private readonly destinationGenerator: DestinationGenerator;
     private readonly vehicleConfig: VehicleConfig;
     private readonly trafficLightSystem: TrafficLightSystem;
+    private readonly vehicleDetector: VehicleDetector;
 
     constructor(
         lanes: readonly Lane[],
@@ -19,12 +21,14 @@ export class VehicleSpawner {
         destinationGenerator: DestinationGenerator,
         vehicleConfig: VehicleConfig,
         trafficLightSystem: TrafficLightSystem,
+        vehicleDetector: VehicleDetector,
     ) {
         this.lanes = lanes;
         this.pathfinder = pathfinder;
         this.destinationGenerator = destinationGenerator;
         this.vehicleConfig = vehicleConfig;
         this.trafficLightSystem = trafficLightSystem;
+        this.vehicleDetector = vehicleDetector;
     }
 
     spawn(): Vehicle {
@@ -38,7 +42,7 @@ export class VehicleSpawner {
             throw new Error('Failed to find a path for spawned vehicle.');
         }
 
-        return new Vehicle(path, this.vehicleConfig, this.trafficLightSystem);
+        return new Vehicle(path, this.vehicleConfig, this.trafficLightSystem, this.vehicleDetector);
     }
 
     private generateStartLocation(): PathLocation {

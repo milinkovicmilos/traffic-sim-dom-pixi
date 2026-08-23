@@ -5,21 +5,31 @@ import { MathUtils } from '@shared/utils/math/math-utils';
 import { Angle } from '@shared/utils/math/angle';
 import type { VehicleConfig } from '@shared/config/vehicle-config';
 import type { TrafficLightSystem } from '@core/traffic/traffic-light-system';
+import type { VehicleDetector } from './vehicle-detector';
 
 export class Vehicle {
     private path: Path;
     private readonly maxSpeed: number;
     private readonly stoppingDistance: number;
+    private readonly followingDistance: number;
     private readonly trafficLightSystem: TrafficLightSystem;
+    private readonly vehicleDetector: VehicleDetector;
 
     private currentSpeed = 0;
     private travelledDistance = 0;
 
-    constructor(path: Path, config: VehicleConfig, trafficLightSystem: TrafficLightSystem) {
+    constructor(
+        path: Path,
+        config: VehicleConfig,
+        trafficLightSystem: TrafficLightSystem,
+        vehicleDetector: VehicleDetector,
+    ) {
         this.path = path;
         this.maxSpeed = config.maxSpeed;
         this.stoppingDistance = config.stoppingDistance;
+        this.followingDistance = config.followDistance;
         this.trafficLightSystem = trafficLightSystem;
+        this.vehicleDetector = vehicleDetector;
     }
 
     getState(): VehicleState {
@@ -51,24 +61,14 @@ export class Vehicle {
      * @param deltaTime Time since the last update
      */
     update(deltaTime: number): void {
-        const trafficLightStopDistance = this.getTrafficLightStopDistance();
+        this.currentSpeed = this.getTargetSpeed();
 
-        if (trafficLightStopDistance !== null && trafficLightStopDistance <= 0) {
-            this.currentSpeed = 0;
-            return;
-        }
+        const distanceToTravel = (this.currentSpeed * deltaTime) / 1000;
 
-        this.currentSpeed = this.maxSpeed;
-
-        let distanceToTravel = this.getMaximumTravelDistance(deltaTime);
-
-        if (trafficLightStopDistance !== null) {
-            distanceToTravel = Math.min(distanceToTravel, trafficLightStopDistance);
-        }
-
-        this.travelledDistance += distanceToTravel;
-
-        this.travelledDistance = Math.min(this.travelledDistance, this.path.getTotalLength());
+        this.travelledDistance = Math.min(
+            this.travelledDistance + distanceToTravel,
+            this.path.getTotalLength(),
+        );
     }
 
     /**
@@ -141,30 +141,19 @@ export class Vehicle {
         return this.maxSpeed;
     }
 
-    private getMaximumTravelDistance(deltaTime: number): number {
-        return (this.currentSpeed * deltaTime) / 1000;
-    }
+    private getTargetSpeed(): number {
+        let targetSpeed = this.getTrafficLightSpeedLimit();
 
-    private getTrafficLightStopDistance(): number | null {
-        const nextMovement = this.path.getNextMovement(this.travelledDistance);
+        const vehicleAhead = this.vehicleDetector.findVehicleAhead(this);
 
-        if (nextMovement === null) {
-            return null;
+        if (vehicleAhead !== null) {
+            if (vehicleAhead.gap <= this.followingDistance) {
+                targetSpeed = 0;
+            } else {
+                targetSpeed = Math.min(targetSpeed, vehicleAhead.vehicle.getMaxSpeed());
+            }
         }
 
-        if (this.trafficLightSystem.allowsMovement(nextMovement)) {
-            return null;
-        }
-
-        const distanceToMovement = this.path.getDistanceToMovement(
-            this.travelledDistance,
-            nextMovement,
-        );
-
-        if (distanceToMovement === null) {
-            return null;
-        }
-
-        return Math.max(0, distanceToMovement - this.stoppingDistance);
+        return targetSpeed;
     }
 }

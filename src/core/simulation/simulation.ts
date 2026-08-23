@@ -9,6 +9,7 @@ import { TrafficLightPhaseFactory } from '@core/traffic/traffic-light-phase-fact
 import { TrafficLightSystem } from '@core/traffic/traffic-light-system';
 import { DestinationGenerator } from '@core/vehicles/destination-generator';
 import { Vehicle } from '@core/vehicles/vehicle';
+import { VehicleDetector } from '@core/vehicles/vehicle-detector';
 import { VehicleSpawner } from '@core/vehicles/vehicle-spawner';
 import type { VehicleState } from '@core/vehicles/vehicle-state';
 import type { SimulationConfig } from '@shared/config/simulation-config';
@@ -23,6 +24,7 @@ export class Simulation {
     private readonly pathfinder: Pathfinder;
     private readonly destinationGenerator: DestinationGenerator;
     private readonly vehicleSpawner: VehicleSpawner;
+    private readonly vehicleDetector: VehicleDetector;
 
     private readonly vehicles: Vehicle[] = [];
 
@@ -39,15 +41,20 @@ export class Simulation {
 
         this.destinationGenerator = new DestinationGenerator(this.roadMap.getLanes());
 
+        this.vehicleDetector = new VehicleDetector();
+
         this.vehicleSpawner = new VehicleSpawner(
             this.roadMap.getLanes(),
             this.pathfinder,
             this.destinationGenerator,
             this.config.vehicles,
             this.trafficLightSystem,
+            this.vehicleDetector,
         );
 
         this.spawnVehicles(this.config.vehicles.count);
+
+        this.vehicleDetector.addVehicles(this.vehicles);
     }
 
     /**
