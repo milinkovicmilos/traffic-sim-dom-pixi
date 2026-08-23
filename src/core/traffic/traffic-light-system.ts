@@ -1,5 +1,5 @@
 import type { RoadNode } from '@core/map/road-node';
-import type { TrafficLightController } from './traffic-light-controller';
+import { TrafficLightController } from './traffic-light-controller';
 import type { Movement } from './movement';
 
 export class TrafficLightSystem {
