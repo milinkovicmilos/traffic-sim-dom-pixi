@@ -6,12 +6,13 @@ import { Angle } from '@shared/utils/math/angle';
 
 export class Vehicle {
     private path: Path;
-    private readonly speed;
+    private readonly maxSpeed: number;
+    private currentSpeed = 0;
     private travelledDistance = 0;
 
-    constructor(path: Path, speed: number) {
+    constructor(path: Path, maxSpeed: number) {
         this.path = path;
-        this.speed = speed;
+        this.maxSpeed = maxSpeed;
     }
 
     getState(): VehicleState {
@@ -25,8 +26,12 @@ export class Vehicle {
         return this.path;
     }
 
-    getSpeed(): number {
-        return this.speed;
+    getCurrentSpeed(): number {
+        return this.currentSpeed;
+    }
+
+    getMaxSpeed(): number {
+        return this.maxSpeed;
     }
 
     getTravelledDistance(): number {
@@ -40,7 +45,7 @@ export class Vehicle {
      */
     update(deltaTime: number): void {
         // Since the speed is defined as units/second, we need to convert the deltaTime to seconds
-        this.travelledDistance += (this.speed * deltaTime) / 1000;
+        this.travelledDistance += (this.maxSpeed * deltaTime) / 1000;
 
         this.travelledDistance = Math.min(this.travelledDistance, this.path.getTotalLength());
     }
