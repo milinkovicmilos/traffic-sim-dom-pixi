@@ -81,51 +81,75 @@ export class Path {
     }
 
     /**
-     * Returns the point of the vehicle based on its distance traveled along this path
+     * Helper method to get the lane that the vehicle is on at given distance travelled along the path
      *
-     * @param {number} distance - The distance that the vehicle has traveled along this path
+     * @param distance - Distance that the vehicle has travelled on the path
+     * @returns Object containing lane and the distance that the vehicle has traveled along it
      */
-    getPositionAtDistance(distance: number): Vector2 {
+    private getLaneAtDistance(distance: number): { lane: Lane; laneDistance: number } {
         const totalLength = this.getTotalLength();
-
         const clampedDistance = MathUtils.clamp(0, distance, totalLength);
 
         if (this.lanes.length === 1) {
-            const lane = this.lanes[0];
-
-            const laneDistance = this.startLocation.getDistance() + clampedDistance;
-
-            return lane.getPosition(laneDistance);
+            return { lane: this.lanes[0], laneDistance: clampedDistance };
         }
 
         let remainingDistance = clampedDistance;
 
-        // Distance available on the first lane.
         const firstLane = this.lanes[0];
-
         const firstLaneDistance = firstLane.getLength() - this.startLocation.getDistance();
 
         if (remainingDistance <= firstLaneDistance) {
-            return firstLane.getPosition(this.startLocation.getDistance() + remainingDistance);
+            return { lane: firstLane, laneDistance: remainingDistance };
         }
 
         remainingDistance -= firstLaneDistance;
 
-        // Intermediate lanes.
         for (let i = 1; i < this.lanes.length - 1; i++) {
             const lane = this.lanes[i];
             const laneLength = lane.getLength();
 
             if (remainingDistance <= laneLength) {
-                return lane.getPosition(remainingDistance);
+                return { lane: lane, laneDistance: remainingDistance };
             }
 
             remainingDistance -= laneLength;
         }
 
-        // Final lane.
         const finalLane = this.lanes[this.lanes.length - 1];
+        const laneDistance = Math.min(remainingDistance, this.endLocation.getDistance());
 
-        return finalLane.getPosition(Math.min(remainingDistance, this.endLocation.getDistance()));
+        return { lane: finalLane, laneDistance: laneDistance };
+    }
+
+    /**
+     * Returns the point of the vehicle based on its distance traveled along this path
+     *
+     * @param {number} distance - The distance that the vehicle has traveled along this path
+     */
+    getPositionAtDistance(distance: number): Vector2 {
+        const laneInfo = this.getLaneAtDistance(distance);
+
+        return laneInfo.lane.getPosition(laneInfo.laneDistance);
+    }
+
+    /**
+     * Return the next movement for the vehicle based on the distance travelled along the path
+     *
+     * @param distance - The distance that the vehicle has traveled along this path
+     */
+    getNextMovement(distance: number): Movement {
+        const laneInfo = this.getLaneAtDistance(distance);
+        const laneIndex = this.lanes.findIndex((lane) => lane === laneInfo.lane);
+        if (laneIndex === -1) {
+            throw new Error('Current lane not found in the movements array.');
+        }
+
+        const nextMovementIndex = laneIndex + 1;
+        if (nextMovementIndex >= this.movements.length) {
+            throw new Error('No next movement available.');
+        }
+
+        return this.movements[nextMovementIndex];
     }
 }
