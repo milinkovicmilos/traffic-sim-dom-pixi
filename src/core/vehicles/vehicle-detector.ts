@@ -52,11 +52,7 @@ export class VehicleDetector {
                 };
             }
         }
-        console.log({
-            vehicle,
-            ahead: closest?.vehicle,
-            gap: closest?.gap,
-        });
+
         return closest;
     }
 }
