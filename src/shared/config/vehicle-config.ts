@@ -6,4 +6,5 @@ export interface VehicleConfig {
     acceleration: number;
     braking: number;
     followDistance: number;
+    stoppingDistance: number;
 }

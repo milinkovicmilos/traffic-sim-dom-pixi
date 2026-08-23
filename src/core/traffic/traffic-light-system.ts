@@ -30,7 +30,8 @@ export class TrafficLightSystem {
         return this.controllers.get(nodeId);
     }
 
-    allowsMovement(nodeId: RoadNode['id'], movement: Movement): boolean {
+    allowsMovement(movement: Movement): boolean {
+        const nodeId = movement.getNode().getId();
         const controller = this.getController(nodeId);
 
         // If there is no controller for this road node it means that it is not an intersection, so we allow it
