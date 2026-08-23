@@ -5,6 +5,6 @@ import type { VehicleConfig } from './vehicle-config';
 export interface SimulationConfig {
     grid: GridConfig;
     vehicles: VehicleConfig;
-    trafficLights: TrafficLightPhaseConfig;
+    trafficLightsPhase: TrafficLightPhaseConfig;
     seed: number;
 }
