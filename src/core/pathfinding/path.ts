@@ -165,4 +165,44 @@ export class Path {
 
         return this.movements[laneIndex];
     }
+
+    /**
+     * Returns the distance along the path at which a movement
+     * begins.
+     *
+     * @param movement Movement on this path.
+     * @returns Path distance at the start of the movement,
+     *          or null if the movement isn't part of this path.
+     */
+    getMovementDistance(movement: Movement): number | null {
+        const movementIndex = this.movements.indexOf(movement);
+
+        if (movementIndex === -1) {
+            return null;
+        }
+
+        let distance = this.lanes[0].getLength() - this.startLocation.getDistance();
+
+        for (let i = 1; i <= movementIndex; i++) {
+            distance += this.lanes[i].getLength();
+        }
+
+        return distance;
+    }
+
+    /**
+     * Returns the distance to the next movement
+     *
+     * @param travelledDistance - The distance the vehicle has traveled along the path
+     * @param movement - The movement that the vehicle is looking forward to
+     */
+    getDistanceToMovement(travelledDistance: number, movement: Movement): number | null {
+        const movementDistance = this.getMovementDistance(movement);
+
+        if (movementDistance === null) {
+            return null;
+        }
+
+        return movementDistance - travelledDistance;
+    }
 }
