@@ -3,4 +3,5 @@ export interface GridConfig {
     columns: number;
     blockSize: number;
     roadWidth: number;
+    laneWidth: number;
 }
