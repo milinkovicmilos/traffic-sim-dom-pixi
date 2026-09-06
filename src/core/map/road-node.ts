@@ -51,7 +51,8 @@ export class RoadNode {
      */
     getIncomingLanes(): readonly Lane[] {
         return this.roads
-            .flatMap((road) => [road.getFordwardLane(), road.getBackwardLane()])
+            .flatMap((road) => [road.getForwardLanes(), road.getBackwardLanes()])
+            .flat()
             .filter((lane) => lane.getEndNode() === this);
     }
 
@@ -60,7 +61,8 @@ export class RoadNode {
      */
     getOutgoingLanes(): readonly Lane[] {
         return this.roads
-            .flatMap((road) => [road.getFordwardLane(), road.getBackwardLane()])
+            .flatMap((road) => [road.getForwardLanes(), road.getBackwardLanes()])
+            .flat()
             .filter((lane) => lane.getStartNode() === this);
     }
 }

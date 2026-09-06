@@ -113,13 +113,17 @@ export class GridGenerator {
      * Creates a two-way road between two nodes
      */
     private createRoad(nodeA: RoadNode, nodeB: RoadNode, roadId: number, lanes: Lane[]): Road {
-        const forwardLane = new Lane(lanes.length, nodeA, nodeB);
+        const road = new Road(roadId, nodeA, nodeB);
+
+        const laneOffset = this.config.laneWidth / 2;
+
+        const forwardLane = new Lane(lanes.length, nodeA, nodeB, road, laneOffset);
+        road.addForwardLane(forwardLane);
         lanes.push(forwardLane);
 
-        const backwardLane = new Lane(lanes.length, nodeB, nodeA);
+        const backwardLane = new Lane(lanes.length, nodeB, nodeA, road, laneOffset);
+        road.addBackwardLane(backwardLane);
         lanes.push(backwardLane);
-
-        const road = new Road(roadId, nodeA, nodeB, forwardLane, backwardLane);
 
         nodeA.addRoad(road);
         nodeB.addRoad(road);
