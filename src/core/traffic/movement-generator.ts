@@ -13,6 +13,14 @@ export class MovementGenerator {
                     continue;
                 }
 
+                // Don't allow U-turns on the corner roads/nodes
+                if (
+                    node.getType() === 'Corner' &&
+                    incomingLane.getRoad() === outgoingLane.getRoad()
+                ) {
+                    continue;
+                }
+
                 movements.push(new Movement(incomingLane, outgoingLane));
             }
         }

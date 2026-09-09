@@ -5,8 +5,8 @@ export class Road {
     private readonly id: number;
     private readonly nodeA: RoadNode;
     private readonly nodeB: RoadNode;
-    private readonly forwardLane: Lane;
-    private readonly backwardLane: Lane;
+    private readonly forwardLanes: Lane[] = [];
+    private readonly backwardLanes: Lane[] = [];
 
     getId(): number {
         return this.id;
@@ -20,25 +20,25 @@ export class Road {
         return this.nodeB;
     }
 
-    getFordwardLane(): Lane {
-        return this.forwardLane;
+    getForwardLanes(): readonly Lane[] {
+        return this.forwardLanes;
     }
 
-    getBackwardLane(): Lane {
-        return this.backwardLane;
+    getBackwardLanes(): readonly Lane[] {
+        return this.backwardLanes;
     }
 
-    constructor(
-        id: number,
-        nodeA: RoadNode,
-        nodeB: RoadNode,
-        forwardLane: Lane,
-        backwardLane: Lane,
-    ) {
+    constructor(id: number, nodeA: RoadNode, nodeB: RoadNode) {
         this.id = id;
         this.nodeA = nodeA;
         this.nodeB = nodeB;
-        this.forwardLane = forwardLane;
-        this.backwardLane = backwardLane;
+    }
+
+    addForwardLane(lane: Lane): void {
+        this.forwardLanes.push(lane);
+    }
+
+    addBackwardLane(lane: Lane): void {
+        this.backwardLanes.push(lane);
     }
 }
