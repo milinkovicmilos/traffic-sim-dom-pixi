@@ -6,40 +6,28 @@ import type { Renderer, RenderState, TrafficLightRenderState } from '@rendering/
 
 export interface DOMRendererOptions {
     container: HTMLElement;
-
-    /**
-     * Spacing inside the scene around the simulation.
-     */
     padding: number;
-
     roadWidth: number;
-
     vehicleLength: number;
     vehicleWidth: number;
 }
 
 interface TrafficLightElements {
     root: HTMLDivElement;
-
     red: HTMLDivElement;
     yellow: HTMLDivElement;
     green: HTMLDivElement;
-
     timer: HTMLDivElement;
 }
 
 export class DOMRenderer implements Renderer {
     private readonly container: HTMLElement;
-
     private readonly padding: number;
-
     private readonly roadWidth: number;
-
     private readonly vehicleLength: number;
     private readonly vehicleWidth: number;
 
     private scene!: HTMLDivElement;
-
     private roadsLayer!: HTMLDivElement;
     private lanesLayer!: HTMLDivElement;
     private trafficLightsLayer!: HTMLDivElement;
@@ -54,13 +42,9 @@ export class DOMRenderer implements Renderer {
 
     constructor(options: DOMRendererOptions) {
         this.container = options.container;
-
         this.padding = options.padding;
-
         this.roadWidth = options.roadWidth;
-
         this.vehicleLength = options.vehicleLength;
-
         this.vehicleWidth = options.vehicleWidth;
     }
 
@@ -72,11 +56,8 @@ export class DOMRenderer implements Renderer {
         this.scene = this.createElement('scene');
 
         this.roadsLayer = this.createLayer('roads-layer');
-
         this.lanesLayer = this.createLayer('lanes-layer');
-
         this.trafficLightsLayer = this.createLayer('traffic-lights-layer');
-
         this.vehiclesLayer = this.createLayer('vehicles-layer');
 
         this.scene.append(
@@ -98,20 +79,16 @@ export class DOMRenderer implements Renderer {
 
         if (!this.mapInitialized) {
             this.renderMap(state.roadMap);
-
             this.createTrafficLights(state.trafficLights);
-
             this.mapInitialized = true;
         }
 
         this.updateTrafficLights(state.trafficLights);
-
         this.updateVehicles(state.vehicles);
     }
 
     destroy(): void {
         this.vehicleElements.clear();
-
         this.trafficLightElements.clear();
 
         this.container.replaceChildren();
@@ -120,49 +97,29 @@ export class DOMRenderer implements Renderer {
         this.mapInitialized = false;
     }
 
-    /* =========================================================
-       COORDINATE OFFSET
-    ========================================================= */
-
-    /**
-     * Converts a simulation X coordinate into a rendered
-     * scene X coordinate.
-     */
     private offsetX(x: number): number {
         return x + this.padding;
     }
 
-    /**
-     * Converts a simulation Y coordinate into a rendered
-     * scene Y coordinate.
-     */
     private offsetY(y: number): number {
         return y + this.padding;
     }
 
-    /* =========================================================
-       MAP
-    ========================================================= */
-
     private renderMap(roadMap: RoadMap): void {
         this.roadsLayer.replaceChildren();
-
         this.lanesLayer.replaceChildren();
 
         for (const road of roadMap.getRoads()) {
             this.renderRoad(road);
-
             this.renderLaneDivider(road);
         }
     }
 
     private renderRoad(road: Road): void {
         const start = road.getNodeA().getPosition();
-
         const end = road.getNodeB().getPosition();
 
         const dx = end.x - start.x;
-
         const dy = end.y - start.y;
 
         const centerLength = Math.sqrt(dx * dx + dy * dy);
@@ -173,13 +130,6 @@ export class DOMRenderer implements Renderer {
 
         const rotation = Math.atan2(dy, dx);
 
-        /*
-         * Extend the road beneath the intersection so that
-         * the roads on the edge of the map appear connected.
-         *
-         * This is road geometry and is independent from
-         * the scene padding.
-         */
         const extension = this.roadWidth / 2;
 
         const startX = start.x - Math.cos(rotation) * extension;
@@ -198,24 +148,16 @@ export class DOMRenderer implements Renderer {
 
         roadElement.style.height = `${this.roadWidth}px`;
 
-        roadElement.style.transform = `translateY(-50%) ` + `rotate(${rotation}rad)`;
+        roadElement.style.transform = `translateY(-50%) rotate(${rotation}rad)`;
 
         this.roadsLayer.appendChild(roadElement);
     }
 
-    /**
-     * Draw exactly one divider for each physical two-way road.
-     *
-     * The actual two lane centerlines are represented by Lane
-     * geometry and are not separately drawn.
-     */
     private renderLaneDivider(road: Road): void {
         const start = road.getNodeA().getPosition();
-
         const end = road.getNodeB().getPosition();
 
         const dx = end.x - start.x;
-
         const dy = end.y - start.y;
 
         const length = Math.sqrt(dx * dx + dy * dy);
@@ -234,18 +176,13 @@ export class DOMRenderer implements Renderer {
 
         divider.style.width = `${length}px`;
 
-        divider.style.transform = `translateY(-50%) ` + `rotate(${rotation}rad)`;
+        divider.style.transform = `translateY(-50%) rotate(${rotation}rad)`;
 
         this.lanesLayer.appendChild(divider);
     }
 
-    /* =========================================================
-       TRAFFIC LIGHTS
-    ========================================================= */
-
     private createTrafficLights(states: readonly TrafficLightRenderState[]): void {
         this.trafficLightsLayer.replaceChildren();
-
         this.trafficLightElements.clear();
 
         for (const state of states) {
@@ -307,10 +244,6 @@ export class DOMRenderer implements Renderer {
         }
     }
 
-    /* =========================================================
-       VEHICLES
-    ========================================================= */
-
     private updateVehicles(vehicles: readonly VehicleState[]): void {
         const activeIndexes = new Set<number>();
 
@@ -327,12 +260,6 @@ export class DOMRenderer implements Renderer {
                 this.vehiclesLayer.appendChild(element);
             }
 
-            /*
-             * The vehicle remains in simulation coordinates.
-             *
-             * Padding is applied exactly once here to get
-             * the rendered scene coordinate.
-             */
             element.style.transform =
                 `translate3d(` +
                 `${this.offsetX(vehicle.position.x)}px, ` +
@@ -347,7 +274,6 @@ export class DOMRenderer implements Renderer {
             }
 
             element.remove();
-
             this.vehicleElements.delete(index);
         }
     }
@@ -362,15 +288,10 @@ export class DOMRenderer implements Renderer {
         return element;
     }
 
-    /* =========================================================
-       DOM HELPERS
-    ========================================================= */
-
     private createLayer(className: string): HTMLDivElement {
         const element = this.createElement(className);
 
         element.style.position = 'absolute';
-
         element.style.inset = '0';
 
         return element;

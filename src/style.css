@@ -79,6 +79,7 @@ body {
     min-width: 0;
     min-height: 0;
     overflow: auto;
+    padding: 32px;
 }
 
 .simulation-content {
@@ -97,6 +98,13 @@ body {
     overflow: scroll;
     border-radius: 16px;
     border: 1px solid #475569;
+}
+
+.renderer-host {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
 }
 
 /* =============================================================
