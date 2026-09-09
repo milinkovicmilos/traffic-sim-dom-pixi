@@ -7,7 +7,11 @@ import type { SimulationConfig } from '@shared/config/simulation-config';
 import type { TrafficLightPhaseConfig } from '@shared/config/traffic-light-phase-config';
 import type { VehicleConfig } from '@shared/config/vehicle-config';
 
-import { createRenderer, type RendererType } from '@rendering/renderer-factory';
+import {
+    createRenderer,
+    type RendererOptions,
+    type RendererType,
+} from '@rendering/renderer-factory';
 
 import type { Renderer } from '@rendering/renderer';
 
@@ -18,11 +22,12 @@ import { createRenderState } from '@rendering/render-state';
 ============================================================= */
 
 const gridConfig: GridConfig = {
-    rows: 5,
-    columns: 5,
+    rows: 24,
+    columns: 24,
     blockSize: 250,
     roadWidth: 30,
     laneWidth: 15,
+    padding: 64,
 };
 
 const trafficLightsPhaseConfig: TrafficLightPhaseConfig = {
@@ -38,7 +43,7 @@ const vehiclesConfig: VehicleConfig = {
     length: 18,
     width: 8,
     maxSpeed: 100,
-    count: 100,
+    count: 300,
     stoppingDistance: 25,
 };
 
@@ -58,10 +63,6 @@ const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
     throw new Error('Could not find #app.');
 }
-
-const simulationWidth = gridConfig.columns * gridConfig.blockSize;
-
-const simulationHeight = gridConfig.rows * gridConfig.blockSize;
 
 app.innerHTML = `
     <div class="simulation-toolbar">
@@ -114,13 +115,11 @@ const simulation = new Simulation(simulationConfig);
  *
  * Renderer switching never recreates it.
  */
-const rendererOptions = {
+const rendererOptions: RendererOptions = {
     dom: {
         container: simulationRoot,
 
-        width: simulationWidth,
-
-        height: simulationHeight,
+        padding: gridConfig.padding,
 
         roadWidth: gridConfig.roadWidth,
 
@@ -132,9 +131,7 @@ const rendererOptions = {
     pixi: {
         container: simulationRoot,
 
-        width: simulationWidth,
-
-        height: simulationHeight,
+        padding: gridConfig.padding,
 
         roadWidth: gridConfig.roadWidth,
 

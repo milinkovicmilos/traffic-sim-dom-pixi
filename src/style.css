@@ -83,25 +83,20 @@ body {
 
 .simulation-content {
     display: flex;
-    width: max-content;
-    height: max-content;
-    min-width: 100%;
-    min-height: 100%;
+    width: 50%;
+    height: 100%;
     padding: 64px;
 }
 
-/*
- * This wrapper is deliberately not a visual "container".
- * It only provides the intrinsic map dimensions.
- */
-.traffic-scene {
+.scene {
     position: relative;
     flex: 0 0 auto;
-    width: 1250px;
-    height: 1250px;
+    width: 100%;
+    height: 100%;
     background: transparent;
-    overflow: visible;
+    overflow: scroll;
     border-radius: 16px;
+    border: 1px solid #475569;
 }
 
 /* =============================================================
