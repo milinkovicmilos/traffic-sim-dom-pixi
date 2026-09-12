@@ -4,6 +4,10 @@ import type { BenchmarkSuiteSetup } from './benchmark-suite';
 const FIXED_MAP_SIZE = 25;
 const FIXED_VEHICLE_COUNT = 1000;
 
+const FIXED_SMALL_MAP_SIZE = 5;
+const FIXED_SECOND_SMALL_MAP_SIZE = 10;
+const FIXED_SMALL_VEHICLE_COUNT = 100;
+
 const STANDARD_BENCHMARK_SEED = 123456789;
 
 export interface BenchmarkSuiteConfig {
@@ -43,24 +47,38 @@ export const standardBenchmarkSuite: BenchmarkSuiteConfig = {
         },
         {
             id: 'map-20x20',
-            name: `20×20 • ${FIXED_VEHICLE_COUNT} vehicles`,
+            name: `20x20 • ${FIXED_VEHICLE_COUNT} vehicles`,
             rows: 20,
             columns: 20,
             vehicleCount: FIXED_VEHICLE_COUNT,
         },
         {
             id: 'map-40x40',
-            name: `40×40 • ${FIXED_VEHICLE_COUNT} vehicles`,
+            name: `40x40 • ${FIXED_VEHICLE_COUNT} vehicles`,
             rows: 40,
             columns: 40,
             vehicleCount: FIXED_VEHICLE_COUNT,
         },
         {
             id: 'map-60x60',
-            name: `60×60 • ${FIXED_VEHICLE_COUNT} vehicles`,
+            name: `60x60 • ${FIXED_VEHICLE_COUNT} vehicles`,
             rows: 60,
             columns: 60,
             vehicleCount: FIXED_VEHICLE_COUNT,
+        },
+        {
+            id: 'map-60x60',
+            name: `${FIXED_SMALL_MAP_SIZE}x${FIXED_SMALL_MAP_SIZE} • ${FIXED_SMALL_VEHICLE_COUNT} vehicles`,
+            rows: FIXED_SMALL_MAP_SIZE,
+            columns: FIXED_SMALL_MAP_SIZE,
+            vehicleCount: FIXED_SMALL_VEHICLE_COUNT,
+        },
+        {
+            id: 'map-60x60',
+            name: `${FIXED_SECOND_SMALL_MAP_SIZE}x${FIXED_SECOND_SMALL_MAP_SIZE} • ${FIXED_SMALL_VEHICLE_COUNT} vehicles`,
+            rows: FIXED_SECOND_SMALL_MAP_SIZE,
+            columns: FIXED_SECOND_SMALL_MAP_SIZE,
+            vehicleCount: FIXED_SMALL_VEHICLE_COUNT,
         },
     ],
 };

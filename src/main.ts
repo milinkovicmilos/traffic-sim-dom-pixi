@@ -1290,6 +1290,7 @@ function readBenchmarkSuiteConfigFromUi(): BenchmarkSuiteConfig {
     }
 
     return {
+        seed: currentSimulationSeed,
         warmupMs,
         durationMs,
         renderers: selectedRenderers,

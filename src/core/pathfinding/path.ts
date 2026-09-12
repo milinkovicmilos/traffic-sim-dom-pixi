@@ -7,8 +7,39 @@ import { MathUtils } from '@shared/utils/math/math-utils';
 export class Path {
     private readonly startLocation: PathLocation;
     private readonly endLocation: PathLocation;
-    private readonly lanes: Lane[];
-    private readonly movements: Movement[];
+    private readonly lanes: readonly Lane[];
+    private readonly movements: readonly Movement[];
+
+    /*
+     * Path distance at which each lane begins.
+     *
+     * Example:
+     *
+     * lane 0 starts at 0
+     * lane 1 starts at remaining length of lane 0
+     * lane 2 starts at remaining length of lane 0 + lane 1
+     *
+     * This avoids repeatedly walking through all preceding lanes.
+     */
+    private readonly laneStartDistances: readonly number[];
+
+    /*
+     * Path distance at which each movement begins.
+     *
+     * movement[i] is the transition from lanes[i] to lanes[i + 1].
+     */
+    private readonly movementDistances: readonly number[];
+
+    /*
+     * Effective distance available on each lane within this path.
+     *
+     * The first lane starts at startLocation.getDistance().
+     * The last lane ends at endLocation.getDistance().
+     * Intermediate lanes use their full length.
+     */
+    private readonly lanePathLengths: readonly number[];
+
+    private readonly totalLength: number;
 
     constructor(start: PathLocation, end: PathLocation, lanes: Lane[], movements: Movement[]) {
         if (lanes.length === 0) {
@@ -31,6 +62,43 @@ export class Path {
         this.endLocation = end;
         this.lanes = lanes;
         this.movements = movements;
+
+        const laneStartDistances = new Array<number>(lanes.length);
+        const lanePathLengths = new Array<number>(lanes.length);
+        const movementDistances = new Array<number>(movements.length);
+
+        let pathDistance = 0;
+
+        for (let i = 0; i < lanes.length; i++) {
+            const lane = lanes[i];
+
+            laneStartDistances[i] = pathDistance;
+
+            let effectiveLength: number;
+
+            if (i === 0) {
+                effectiveLength = lane.getLength() - start.getDistance();
+            } else if (i === lanes.length - 1) {
+                effectiveLength = end.getDistance();
+            } else {
+                effectiveLength = lane.getLength();
+            }
+
+            effectiveLength = Math.max(0, effectiveLength);
+
+            lanePathLengths[i] = effectiveLength;
+
+            if (i < movements.length) {
+                movementDistances[i] = pathDistance + effectiveLength;
+            }
+
+            pathDistance += effectiveLength;
+        }
+
+        this.laneStartDistances = laneStartDistances;
+        this.lanePathLengths = lanePathLengths;
+        this.movementDistances = movementDistances;
+        this.totalLength = Math.max(0, pathDistance);
     }
 
     getStartLocation(): PathLocation {
@@ -58,83 +126,85 @@ export class Path {
     }
 
     /**
-     * Returns the total distance of the path from start to destination
+     * Returns the total distance of the path.
+     *
+     * Cached because the path is immutable.
      */
     getTotalLength(): number {
-        // If start and end is on the same lane, we just subtract the distances
-        if (this.lanes.length === 1) {
-            return Math.max(0, this.endLocation.getDistance() - this.startLocation.getDistance());
-        }
-
-        // Else we get the total distance of the first lane
-        let totalLength = this.startLocation.getFullLaneLength() - this.startLocation.getDistance();
-
-        // add up the length of the rest of the lanes, except the last one
-        for (let i = 1; i < this.lanes.length - 1; i++) {
-            totalLength += this.lanes[i].getLength();
-        }
-
-        // and add the distance along the last lane
-        totalLength += this.endLocation.getDistance();
-
-        return totalLength;
+        return this.totalLength;
     }
 
     /**
      * Returns the lane and distance along that lane for a given
-     * distance travelled along this path.
-     *
-     * @param distance - The distance travelled along the path
+     * distance travelled along the path.
      */
     getPathLocationAtDistance(distance: number): PathLocation {
-        const totalLength = this.getTotalLength();
-        const clampedDistance = MathUtils.clamp(distance, 0, totalLength);
+        const clampedDistance = MathUtils.clamp(distance, 0, this.totalLength);
 
-        if (this.lanes.length === 1) {
-            return new PathLocation(
-                this.lanes[0],
-                this.startLocation.getDistance() + clampedDistance,
-            );
-        }
+        const laneIndex = this.getLaneIndexAtDistance(clampedDistance);
 
-        let remainingDistance = clampedDistance;
+        const laneStartDistance = this.laneStartDistances[laneIndex];
 
-        const firstLane = this.lanes[0];
-        const firstLaneDistance = firstLane.getLength() - this.startLocation.getDistance();
-
-        if (remainingDistance <= firstLaneDistance) {
-            return new PathLocation(
-                firstLane,
-                this.startLocation.getDistance() + remainingDistance,
-            );
-        }
-
-        remainingDistance -= firstLaneDistance;
-
-        for (let i = 1; i < this.lanes.length - 1; i++) {
-            const lane = this.lanes[i];
-            const laneLength = lane.getLength();
-
-            if (remainingDistance <= laneLength) {
-                return new PathLocation(lane, remainingDistance);
-            }
-
-            remainingDistance -= laneLength;
-        }
-
-        const finalLane = this.lanes[this.lanes.length - 1];
+        const laneDistance =
+            this.lanes.length === 1 && laneIndex === 0
+                ? this.startLocation.getDistance() + clampedDistance
+                : laneIndex === 0
+                  ? this.startLocation.getDistance() + (clampedDistance - laneStartDistance)
+                  : clampedDistance - laneStartDistance;
 
         return new PathLocation(
-            finalLane,
-            Math.min(remainingDistance, this.endLocation.getDistance()),
+            this.lanes[laneIndex],
+            Math.min(laneDistance, this.lanes[laneIndex].getLength()),
         );
+    }
+
+    /**
+     * Returns the index of the lane occupied at a given
+     * path distance.
+     *
+     * Binary search keeps this inexpensive for longer paths.
+     */
+    getLaneIndexAtDistance(distance: number): number {
+        if (this.lanes.length === 1) {
+            return 0;
+        }
+
+        const clampedDistance = MathUtils.clamp(distance, 0, this.totalLength);
+
+        let low = 0;
+        let high = this.lanes.length - 1;
+
+        while (low < high) {
+            const mid = Math.floor((low + high + 1) / 2);
+
+            if (this.laneStartDistances[mid] <= clampedDistance) {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        /*
+         * At an exact lane boundary, retain the previous lane.
+         * This preserves the semantics of getPathLocationAtDistance().
+         */
+        if (
+            low > 0 &&
+            Math.abs(clampedDistance - this.laneStartDistances[low]) <= MathUtils.epsilon
+        ) {
+            return low - 1;
+        }
+
+        return low;
     }
 
     /**
      * Returns the total path distance corresponding to a
      * position on one of this path's lanes.
      *
-     * Returns null if the lane isn't part of the path.
+     * Returns null if the lane isn't part of the path or if the
+     * position is outside the portion of the lane represented by
+     * this path.
      */
     getPathDistanceAtLaneDistance(lane: Lane, laneDistance: number): number | null {
         const laneIndex = this.lanes.indexOf(lane);
@@ -143,23 +213,45 @@ export class Path {
             return null;
         }
 
+        if (
+            laneDistance < -MathUtils.epsilon ||
+            laneDistance > lane.getLength() + MathUtils.epsilon
+        ) {
+            return null;
+        }
+
         if (laneIndex === 0) {
-            return laneDistance - this.startLocation.getDistance();
+            const pathDistance = laneDistance - this.startLocation.getDistance();
+
+            if (pathDistance < -MathUtils.epsilon) {
+                return null;
+            }
+
+            if (pathDistance > this.lanePathLengths[0] + MathUtils.epsilon) {
+                return null;
+            }
+
+            return Math.max(0, pathDistance);
         }
 
-        let distance = this.lanes[0].getLength() - this.startLocation.getDistance();
+        const laneStartDistance = this.laneStartDistances[laneIndex];
 
-        for (let i = 1; i < laneIndex; i++) {
-            distance += this.lanes[i].getLength();
+        const pathDistance = laneStartDistance + laneDistance;
+
+        /*
+         * The final lane may end before its physical lane end
+         * because the destination is inside it.
+         */
+        if (laneDistance > this.lanePathLengths[laneIndex] + MathUtils.epsilon) {
+            return null;
         }
 
-        return distance + laneDistance;
+        return pathDistance;
     }
 
     /**
-     * Returns the point of the vehicle based on its distance traveled along this path
-     *
-     * @param {number} distance - The distance that the vehicle has traveled along this path
+     * Returns the point of the vehicle based on its distance
+     * travelled along this path.
      */
     getPositionAtDistance(distance: number): Vector2 {
         const pathLocation = this.getPathLocationAtDistance(distance);
@@ -168,19 +260,11 @@ export class Path {
     }
 
     /**
-     * Returns the next movement the vehicle has to traverse.
-     *
-     * @param distance Distance travelled along the path.
-     * @returns The next movement, or null if there is none.
+     * Returns the movement currently ahead of the given
+     * path distance.
      */
     getNextMovement(distance: number): Movement | null {
-        const pathLocation = this.getPathLocationAtDistance(distance);
-
-        const laneIndex = this.lanes.indexOf(pathLocation.getLane());
-
-        if (laneIndex === -1) {
-            throw new Error('Current lane not found in path.');
-        }
+        const laneIndex = this.getLaneIndexAtDistance(distance);
 
         if (laneIndex >= this.movements.length) {
             return null;
@@ -192,10 +276,6 @@ export class Path {
     /**
      * Returns the distance along the path at which a movement
      * begins.
-     *
-     * @param movement Movement on this path.
-     * @returns Path distance at the start of the movement,
-     *          or null if the movement isn't part of this path.
      */
     getMovementDistance(movement: Movement): number | null {
         const movementIndex = this.movements.indexOf(movement);
@@ -204,20 +284,24 @@ export class Path {
             return null;
         }
 
-        let distance = this.lanes[0].getLength() - this.startLocation.getDistance();
-
-        for (let i = 1; i <= movementIndex; i++) {
-            distance += this.lanes[i].getLength();
-        }
-
-        return distance;
+        return this.movementDistances[movementIndex];
     }
 
     /**
-     * Returns the distance to the next movement
-     *
-     * @param travelledDistance - The distance the vehicle has traveled along the path
-     * @param movement - The movement that the vehicle is looking forward to
+     * Faster index-based variant for callers that already know
+     * the movement's position in the path.
+     */
+    getMovementDistanceAtIndex(movementIndex: number): number | null {
+        if (movementIndex < 0 || movementIndex >= this.movementDistances.length) {
+            return null;
+        }
+
+        return this.movementDistances[movementIndex];
+    }
+
+    /**
+     * Returns the distance to a movement from the current
+     * travelled distance.
      */
     getDistanceToMovement(travelledDistance: number, movement: Movement): number | null {
         const movementDistance = this.getMovementDistance(movement);

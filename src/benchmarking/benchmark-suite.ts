@@ -1,5 +1,6 @@
 import type { RendererType } from '@rendering/renderer-factory';
 import type { BenchmarkSnapshot, BenchmarkMonitor } from './benchmark-monitor';
+import type { BenchmarkSuiteConfig } from './benchmark-suite-config';
 
 export interface BenchmarkSuiteSetup {
     id: string;

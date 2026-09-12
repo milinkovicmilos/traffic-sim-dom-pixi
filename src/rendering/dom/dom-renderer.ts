@@ -43,7 +43,15 @@ export class DOMRenderer implements Renderer {
     private readonly vehicleElements = new Map<number, HTMLImageElement>();
 
     private initialized = false;
-    private mapInitialized = false;
+
+    /**
+     * The RoadMap currently represented by the DOM.
+     *
+     * The simulation can replace its RoadMap between benchmark runs,
+     * while the renderer instance itself remains alive. Tracking the
+     * rendered map lets us rebuild static geometry when that happens.
+     */
+    private renderedRoadMap: RoadMap | null = null;
 
     constructor(options: DOMRendererOptions) {
         this.container = options.container;
@@ -89,12 +97,17 @@ export class DOMRenderer implements Renderer {
             this.initialize();
         }
 
-        if (!this.mapInitialized) {
+        /*
+         * A benchmark setup can replace the simulation's RoadMap while
+         * this renderer instance stays alive. Rebuild the static map and
+         * traffic-light elements whenever a different RoadMap is received.
+         */
+        if (state.roadMap !== this.renderedRoadMap) {
             this.renderMap(state.roadMap);
 
             this.createTrafficLights(state.trafficLights);
 
-            this.mapInitialized = true;
+            this.renderedRoadMap = state.roadMap;
         }
 
         this.updateTrafficLights(state.trafficLights);
@@ -104,12 +117,14 @@ export class DOMRenderer implements Renderer {
 
     destroy(): void {
         this.vehicleElements.clear();
+
         this.trafficLightElements.clear();
 
         this.container.replaceChildren();
 
         this.initialized = false;
-        this.mapInitialized = false;
+
+        this.renderedRoadMap = null;
     }
 
     private offsetX(x: number): number {
@@ -122,10 +137,12 @@ export class DOMRenderer implements Renderer {
 
     private renderMap(roadMap: RoadMap): void {
         this.roadsLayer.replaceChildren();
+
         this.lanesLayer.replaceChildren();
 
         for (const road of roadMap.getRoads()) {
             this.renderRoad(road);
+
             this.renderLaneDivider(road);
         }
     }
@@ -202,6 +219,7 @@ export class DOMRenderer implements Renderer {
 
     private createTrafficLights(states: readonly TrafficLightRenderState[]): void {
         this.trafficLightsLayer.replaceChildren();
+
         this.trafficLightElements.clear();
 
         for (const state of states) {
@@ -293,6 +311,7 @@ export class DOMRenderer implements Renderer {
             }
 
             element.remove();
+
             this.vehicleElements.delete(index);
         }
     }

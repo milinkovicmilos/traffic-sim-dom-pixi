@@ -49,33 +49,32 @@ interface TrafficLightRenderObject {
     lastTimerText: string;
 }
 
+interface StaticMapChunk {
+    roads: Graphics;
+    lanes: Graphics;
+
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+}
+
 /*
  * =============================================================
  * VEHICLE IMAGE
  * =============================================================
- *
- * Vite resolves this at build time.
- *
- * The source image is downsampled once during initialization
- * into a small texture that matches the simulation scale.
  */
+
 const VEHICLE_IMAGE_URL = new URL('../../assets/vehicle.webp', import.meta.url).href;
 
-/*
- * Generate the texture at 4x the logical simulation dimensions.
- *
- * Example:
- * vehicleLength = 18
- * vehicleWidth  = 8
- *
- * Actual GPU texture:
- * 72 x 32
- */
 const VEHICLE_TEXTURE_SCALE = 4;
 
 /*
- * Traffic light dimensions.
+ * =============================================================
+ * TRAFFIC LIGHTS
+ * =============================================================
  */
+
 const TRAFFIC_LIGHT_WIDTH = 18;
 const TRAFFIC_LIGHT_HEIGHT = 38;
 
@@ -95,16 +94,8 @@ const LANE_DIVIDER_COLOR = 0xd6d3d1;
 const INACTIVE_LAMP_ALPHA = 0.18;
 const ACTIVE_LAMP_ALPHA = 1;
 
-/*
- * High resolution source artwork.
- *
- * The final logical traffic light is still only 18x38.
- */
 const TRAFFIC_LIGHT_TEXTURE_SCALE = 4;
 
-/*
- * Glow remains separate from the texture.
- */
 const GLOW_OUTER_RADIUS = 11;
 const GLOW_MIDDLE_RADIUS = 8;
 const GLOW_INNER_RADIUS = 6;
@@ -113,7 +104,16 @@ const GLOW_OUTER_ALPHA = 0.07;
 const GLOW_MIDDLE_ALPHA = 0.14;
 const GLOW_INNER_ALPHA = 0.24;
 
-const VEHICLE_BORDER_RADIUS = 3;
+/*
+ * =============================================================
+ * STATIC MAP
+ * =============================================================
+ */
+const STATIC_CHUNK_SIZE = 2000;
+
+const STATIC_CHUNK_CULL_MARGIN = 300;
+
+const ROAD_EXTENDED_MARGIN = 500;
 
 export class PixiRenderer implements Renderer {
     private readonly container: HTMLElement;
@@ -136,14 +136,8 @@ export class PixiRenderer implements Renderer {
     private initialized = false;
     private mapInitialized = false;
 
-    /*
-     * One shared vehicle texture for every vehicle.
-     */
     private vehicleTexture!: Texture;
 
-    /*
-     * Shared traffic light textures.
-     */
     private trafficLightHousingTexture!: Texture;
     private trafficLightRedTexture!: Texture;
     private trafficLightYellowTexture!: Texture;
@@ -152,9 +146,21 @@ export class PixiRenderer implements Renderer {
     private readonly trafficLightElements = new Map<string, TrafficLightRenderObject>();
 
     /*
-     * Persistent particle objects.
+     * Persistent vehicle particles.
      */
     private readonly vehicleParticles: Particle[] = [];
+
+    /*
+     * Static map chunks.
+     *
+     * Each chunk has exactly:
+     *
+     *   1 road Graphics
+     *   1 lane Graphics
+     *
+     * regardless of how many roads exist inside the chunk.
+     */
+    private readonly staticMapChunks = new Map<string, StaticMapChunk>();
 
     private mapMinX = 0;
     private mapMinY = 0;
@@ -209,9 +215,6 @@ export class PixiRenderer implements Renderer {
             resolution,
             autoDensity: true,
 
-            /*
-             * Keep the simulation geometry crisp.
-             */
             antialias: false,
 
             backgroundAlpha: 0,
@@ -231,9 +234,7 @@ export class PixiRenderer implements Renderer {
         this.trafficLightsLayer = new Container();
 
         /*
-         * This is the high-performance vehicle layer.
-         *
-         * Only position and rotation are dynamic.
+         * Vehicle rendering stays in a ParticleContainer.
          */
         this.vehiclesLayer = new ParticleContainer({
             dynamicProperties: {
@@ -258,15 +259,8 @@ export class PixiRenderer implements Renderer {
 
         this.vehiclesLayer.label = 'vehicles-layer';
 
-        /*
-         * Load the actual source image and create ONE small
-         * simulation-sized GPU texture from it.
-         */
         this.vehicleTexture = await this.createVehicleTexture();
 
-        /*
-         * Traffic light textures are created once.
-         */
         this.trafficLightHousingTexture = this.createTrafficLightHousingTexture();
 
         this.trafficLightRedTexture = this.createTrafficLightLampTexture(RED_COLOR);
@@ -326,14 +320,13 @@ export class PixiRenderer implements Renderer {
             this.resizeViewport();
         }
 
-        /*
-         * Dynamic work only.
-         */
         this.updateTrafficLights(state.trafficLights);
 
         this.updateVehicles(state.vehicles);
 
         this.updateCameraTransform();
+
+        this.updateStaticChunkVisibility();
 
         this.updateTrafficLightVisibility();
 
@@ -350,6 +343,8 @@ export class PixiRenderer implements Renderer {
         this.trafficLightElements.clear();
 
         this.vehicleParticles.length = 0;
+
+        this.staticMapChunks.clear();
 
         if (this.vehicleTexture) {
             this.vehicleTexture.destroy(true);
@@ -381,12 +376,15 @@ export class PixiRenderer implements Renderer {
         this.container.replaceChildren();
 
         this.initialized = false;
+
         this.mapInitialized = false;
 
         this.cameraX = 0;
+
         this.cameraY = 0;
 
         this.viewportWidth = 1;
+
         this.viewportHeight = 1;
     }
 
@@ -394,13 +392,6 @@ export class PixiRenderer implements Renderer {
     // VEHICLE TEXTURE
     // =====================================================================
 
-    /**
-     * Loads vehicle.webp once and downsamples it into a tiny texture
-     * appropriate for the actual simulation dimensions.
-     *
-     * This keeps a potentially large source image out of the hot
-     * rendering path.
-     */
     private async createVehicleTexture(): Promise<Texture> {
         const sourceTexture = await Assets.load<Texture>(VEHICLE_IMAGE_URL);
 
@@ -428,19 +419,10 @@ export class PixiRenderer implements Renderer {
             throw new Error('Unable to create vehicle texture canvas.');
         }
 
-        /*
-         * High-quality one-time resize.
-         *
-         * This cost happens once during renderer initialization,
-         * not once per vehicle or once per frame.
-         */
         context.imageSmoothingEnabled = true;
 
         context.imageSmoothingQuality = 'high';
 
-        /*
-         * Preserve alpha from the source WEBP.
-         */
         context.clearRect(0, 0, targetWidth, targetHeight);
 
         const source = sourceTexture.source.resource;
@@ -451,37 +433,14 @@ export class PixiRenderer implements Renderer {
             throw new Error('Vehicle texture source is not a drawable image.');
         }
 
-        /*
-         * Draw the source artwork into the exact simulation
-         * aspect ratio.
-         */
         context.drawImage(source, 0, 0, targetWidth, targetHeight);
 
-        /*
-         * Convert the small canvas into the texture actually shared
-         * by all vehicle particles.
-         */
         const texture = Texture.from(canvas, true);
 
-        /*
-         * The image is frequently rendered smaller than the source.
-         * Linear filtering is appropriate for normal vehicle artwork.
-         */
         texture.source.scaleMode = 'linear';
 
-        /*
-         * We don't need mipmaps for an 18x8 sprite that has a fixed
-         * simulation size.
-         *
-         * This avoids unnecessary mipmap generation/upload work.
-         */
         texture.source.autoGenerateMipmaps = false;
 
-        /*
-         * The temporary source texture loaded through Assets is no
-         * longer needed after the image has been copied to our tiny
-         * canvas texture.
-         */
         sourceTexture.destroy(true);
 
         return texture;
@@ -630,40 +589,49 @@ export class PixiRenderer implements Renderer {
 
         this.lanesLayer.removeChildren();
 
+        this.staticMapChunks.clear();
+
         const nodes = roadMap.getNodes();
 
         if (nodes.length === 0) {
             this.mapMinX = 0;
+
             this.mapMinY = 0;
+
             this.mapMaxX = 1;
+
             this.mapMaxY = 1;
-        } else {
-            let minX = Number.POSITIVE_INFINITY;
 
-            let minY = Number.POSITIVE_INFINITY;
-
-            let maxX = Number.NEGATIVE_INFINITY;
-
-            let maxY = Number.NEGATIVE_INFINITY;
-
-            for (const node of nodes) {
-                const position = node.getPosition();
-
-                minX = Math.min(minX, position.x);
-
-                minY = Math.min(minY, position.y);
-
-                maxX = Math.max(maxX, position.x);
-
-                maxY = Math.max(maxY, position.y);
-            }
-
-            this.mapMinX = minX;
-            this.mapMinY = minY;
-
-            this.mapMaxX = maxX;
-            this.mapMaxY = maxY;
+            return;
         }
+
+        let minX = Number.POSITIVE_INFINITY;
+
+        let minY = Number.POSITIVE_INFINITY;
+
+        let maxX = Number.NEGATIVE_INFINITY;
+
+        let maxY = Number.NEGATIVE_INFINITY;
+
+        for (const node of nodes) {
+            const position = node.getPosition();
+
+            minX = Math.min(minX, position.x);
+
+            minY = Math.min(minY, position.y);
+
+            maxX = Math.max(maxX, position.x);
+
+            maxY = Math.max(maxY, position.y);
+        }
+
+        this.mapMinX = minX;
+
+        this.mapMinY = minY;
+
+        this.mapMaxX = maxX;
+
+        this.mapMaxY = maxY;
 
         const extension = this.roadWidth / 2;
 
@@ -679,75 +647,88 @@ export class PixiRenderer implements Renderer {
         );
 
         for (const road of roadMap.getRoads()) {
-            this.renderRoad(road);
+            const chunk = this.getOrCreateStaticChunk(road);
 
-            this.renderLaneDivider(road);
+            this.addRoadGeometry(chunk.roads, road);
+
+            this.addLaneDividerGeometry(chunk.lanes, road);
         }
 
-        const resolution = this.app.renderer.resolution;
-
-        if (this.roadsLayer.children.length > 0) {
-            this.roadsLayer.cacheAsTexture({
-                resolution,
-                antialias: false,
-            });
-        }
-
-        if (this.lanesLayer.children.length > 0) {
-            this.lanesLayer.cacheAsTexture({
-                resolution,
-                antialias: false,
-            });
-        }
+        this.updateStaticChunkVisibility();
     }
 
-    private renderRoad(road: Road): void {
+    private getOrCreateStaticChunk(road: Road): StaticMapChunk {
+        const nodeA = road.getNodeA().getPosition();
+
+        const nodeB = road.getNodeB().getPosition();
+
+        const midpointX = (this.offsetX(nodeA.x) + this.offsetX(nodeB.x)) / 2;
+
+        const midpointY = (this.offsetY(nodeA.y) + this.offsetY(nodeB.y)) / 2;
+
+        const chunkX = Math.floor(midpointX / STATIC_CHUNK_SIZE);
+
+        const chunkY = Math.floor(midpointY / STATIC_CHUNK_SIZE);
+
+        const key = `${chunkX}:${chunkY}`;
+
+        const existing = this.staticMapChunks.get(key);
+
+        if (existing) {
+            return existing;
+        }
+
+        const minX = chunkX * STATIC_CHUNK_SIZE - ROAD_EXTENDED_MARGIN;
+
+        const minY = chunkY * STATIC_CHUNK_SIZE - ROAD_EXTENDED_MARGIN;
+
+        const maxX = (chunkX + 1) * STATIC_CHUNK_SIZE + ROAD_EXTENDED_MARGIN;
+
+        const maxY = (chunkY + 1) * STATIC_CHUNK_SIZE + ROAD_EXTENDED_MARGIN;
+
+        const roads = new Graphics();
+
+        const lanes = new Graphics();
+
+        roads.label = `roads-chunk-${key}`;
+
+        lanes.label = `lanes-chunk-${key}`;
+
+        this.roadsLayer.addChild(roads);
+
+        this.lanesLayer.addChild(lanes);
+
+        const chunk: StaticMapChunk = {
+            roads,
+            lanes,
+
+            minX,
+            minY,
+            maxX,
+            maxY,
+        };
+
+        this.staticMapChunks.set(key, chunk);
+
+        return chunk;
+    }
+
+    private addRoadGeometry(graphics: Graphics, road: Road): void {
         const start = road.getNodeA().getPosition();
 
         const end = road.getNodeB().getPosition();
 
-        const dx = end.x - start.x;
+        const startX = this.offsetX(start.x);
 
-        const dy = end.y - start.y;
+        const startY = this.offsetY(start.y);
 
-        const centerLength = Math.sqrt(dx * dx + dy * dy);
+        const endX = this.offsetX(end.x);
 
-        if (centerLength === 0) {
-            return;
-        }
+        const endY = this.offsetY(end.y);
 
-        const rotation = Math.atan2(dy, dx);
+        const dx = endX - startX;
 
-        const extension = this.roadWidth / 2;
-
-        const startX = start.x - Math.cos(rotation) * extension;
-
-        const startY = start.y - Math.sin(rotation) * extension;
-
-        const length = centerLength + extension * 2;
-
-        const roadGraphics = new Graphics();
-
-        roadGraphics.rect(0, -this.roadWidth / 2, length, this.roadWidth).fill({
-            color: ROAD_COLOR,
-            alpha: 1,
-        });
-
-        roadGraphics.position.set(this.offsetX(startX), this.offsetY(startY));
-
-        roadGraphics.rotation = rotation;
-
-        this.roadsLayer.addChild(roadGraphics);
-    }
-
-    private renderLaneDivider(road: Road): void {
-        const start = road.getNodeA().getPosition();
-
-        const end = road.getNodeB().getPosition();
-
-        const dx = end.x - start.x;
-
-        const dy = end.y - start.y;
+        const dy = endY - startY;
 
         const length = Math.sqrt(dx * dx + dy * dy);
 
@@ -755,12 +736,87 @@ export class PixiRenderer implements Renderer {
             return;
         }
 
-        const rotation = Math.atan2(dy, dx);
+        const directionX = dx / length;
 
-        const divider = new Graphics();
+        const directionY = dy / length;
+
+        const halfWidth = this.roadWidth / 2;
+
+        /*
+         * Extend the road to the intersection center.
+         * This preserves the appearance of the original renderer.
+         */
+        const extendedStartX = startX - directionX * halfWidth;
+
+        const extendedStartY = startY - directionY * halfWidth;
+
+        const extendedEndX = endX + directionX * halfWidth;
+
+        const extendedEndY = endY + directionY * halfWidth;
+
+        /*
+         * Perpendicular vector.
+         */
+        const normalX = -directionY * halfWidth;
+
+        const normalY = directionX * halfWidth;
+
+        /*
+         * Construct the road as one filled polygon.
+         *
+         * No child Graphics object.
+         * No rotation.
+         * No transform.
+         */
+        graphics
+            .moveTo(extendedStartX + normalX, extendedStartY + normalY)
+            .lineTo(extendedEndX + normalX, extendedEndY + normalY)
+            .lineTo(extendedEndX - normalX, extendedEndY - normalY)
+            .lineTo(extendedStartX - normalX, extendedStartY - normalY)
+            .closePath();
+
+        graphics.fill({
+            color: ROAD_COLOR,
+            alpha: 1,
+        });
+    }
+
+    private addLaneDividerGeometry(graphics: Graphics, road: Road): void {
+        const start = road.getNodeA().getPosition();
+
+        const end = road.getNodeB().getPosition();
+
+        const startX = this.offsetX(start.x);
+
+        const startY = this.offsetY(start.y);
+
+        const endX = this.offsetX(end.x);
+
+        const endY = this.offsetY(end.y);
+
+        const dx = endX - startX;
+
+        const dy = endY - startY;
+
+        const length = Math.sqrt(dx * dx + dy * dy);
+
+        if (length === 0) {
+            return;
+        }
+
+        const directionX = dx / length;
+
+        const directionY = dy / length;
+
+        const perpendicularX = -directionY;
+
+        const perpendicularY = directionX;
 
         const dashLength = 10;
+
         const gapLength = 10;
+
+        const halfThickness = 0.5;
 
         for (let distance = 0; distance < length; distance += dashLength + gapLength) {
             const currentLength = Math.min(dashLength, length - distance);
@@ -769,19 +825,56 @@ export class PixiRenderer implements Renderer {
                 break;
             }
 
-            divider.rect(distance, -0.5, currentLength, 1);
+            const dashStartX = startX + directionX * distance;
+
+            const dashStartY = startY + directionY * distance;
+
+            const dashEndX = dashStartX + directionX * currentLength;
+
+            const dashEndY = dashStartY + directionY * currentLength;
+
+            const offsetX = perpendicularX * halfThickness;
+
+            const offsetY = perpendicularY * halfThickness;
+
+            /*
+             * One rectangle per dash, but all rectangles are
+             * accumulated into the SAME chunk Graphics object.
+             */
+            graphics
+                .moveTo(dashStartX + offsetX, dashStartY + offsetY)
+                .lineTo(dashEndX + offsetX, dashEndY + offsetY)
+                .lineTo(dashEndX - offsetX, dashEndY - offsetY)
+                .lineTo(dashStartX - offsetX, dashStartY - offsetY)
+                .closePath();
         }
 
-        divider.fill({
+        graphics.fill({
             color: LANE_DIVIDER_COLOR,
             alpha: 0.8,
         });
+    }
 
-        divider.position.set(this.offsetX(start.x), this.offsetY(start.y));
+    private updateStaticChunkVisibility(): void {
+        const visibleMinX = -this.cameraX - STATIC_CHUNK_CULL_MARGIN;
 
-        divider.rotation = rotation;
+        const visibleMinY = -this.cameraY - STATIC_CHUNK_CULL_MARGIN;
 
-        this.lanesLayer.addChild(divider);
+        const visibleMaxX = -this.cameraX + this.viewportWidth + STATIC_CHUNK_CULL_MARGIN;
+
+        const visibleMaxY = -this.cameraY + this.viewportHeight + STATIC_CHUNK_CULL_MARGIN;
+
+        for (const chunk of this.staticMapChunks.values()) {
+            const visible =
+                chunk.maxX >= visibleMinX &&
+                chunk.minX <= visibleMaxX &&
+                chunk.maxY >= visibleMinY &&
+                chunk.minY <= visibleMaxY;
+
+            chunk.roads.visible = visible;
+
+            chunk.lanes.visible = visible;
+        }
     }
 
     // =====================================================================
@@ -978,10 +1071,6 @@ export class PixiRenderer implements Renderer {
             elements.lastColor = state.color;
         }
 
-        /*
-         * Timer text is only regenerated when the visible
-         * 0.1 second value changes.
-         */
         const timerText = `${(state.remainingTime / 1000).toFixed(1)}s`;
 
         if (elements.lastTimerText !== timerText) {
@@ -1030,14 +1119,6 @@ export class PixiRenderer implements Renderer {
 
         this.ensureVehicleCount(count);
 
-        /*
-         * Critical hot loop:
-         *
-         * Only position and rotation change.
-         *
-         * ParticleContainer uploads these dynamic properties
-         * efficiently to the GPU.
-         */
         for (let i = 0; i < count; i += 1) {
             const vehicle = vehicles[i];
 
@@ -1058,10 +1139,6 @@ export class PixiRenderer implements Renderer {
             return;
         }
 
-        /*
-         * Vehicle count normally remains constant, so this path
-         * should only run when the simulation count changes.
-         */
         if (count > currentCount) {
             for (let i = currentCount; i < count; i += 1) {
                 const particle = this.createVehicle();
@@ -1071,21 +1148,11 @@ export class PixiRenderer implements Renderer {
                 this.vehiclesLayer.addParticle(particle);
             }
 
-            /*
-             * Static particle properties were added.
-             *
-             * According to Pixi's ParticleContainer model,
-             * update() is required after changing static particle
-             * properties or the particle list.
-             */
             this.vehiclesLayer.update();
 
             return;
         }
 
-        /*
-         * Remove particles that are no longer required.
-         */
         this.vehiclesLayer.removeParticles(count, currentCount);
 
         this.vehicleParticles.length = count;
@@ -1100,11 +1167,6 @@ export class PixiRenderer implements Renderer {
             throw new Error('Vehicle texture has invalid dimensions.');
         }
 
-        /*
-         * Because the source was already downsampled to
-         * vehicleLength * VEHICLE_TEXTURE_SCALE,
-         * this scale is constant for every vehicle.
-         */
         const scale = 1 / VEHICLE_TEXTURE_SCALE;
 
         return new Particle({
@@ -1114,11 +1176,9 @@ export class PixiRenderer implements Renderer {
             y: 0,
 
             scaleX: scale,
-
             scaleY: scale,
 
             anchorX: 0.5,
-
             anchorY: 0.5,
 
             rotation: 0,
@@ -1161,6 +1221,10 @@ export class PixiRenderer implements Renderer {
         this.clampCamera();
 
         this.updateCameraTransform();
+
+        this.updateStaticChunkVisibility();
+
+        this.updateTrafficLightVisibility();
     }
 
     private clampCamera(): void {
@@ -1264,6 +1328,10 @@ export class PixiRenderer implements Renderer {
         this.clampCamera();
 
         this.updateCameraTransform();
+
+        this.updateStaticChunkVisibility();
+
+        this.updateTrafficLightVisibility();
     };
 
     private readonly handlePointerUp = (event: PointerEvent): void => {

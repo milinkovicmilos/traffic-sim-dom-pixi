@@ -6,9 +6,18 @@ export class TrafficLightPhase {
     private readonly allowedMovements: readonly Movement[];
 
     constructor(name: string, durationMs: number, allowedMovements: Movement[]) {
+        if (durationMs <= 0) {
+            throw new Error('Traffic light phase duration must be greater than zero.');
+        }
+
         this.name = name;
+
         this.duration = durationMs;
-        this.allowedMovements = allowedMovements;
+
+        /*
+         * Keep the list immutable from the phase's point of view.
+         */
+        this.allowedMovements = [...allowedMovements];
     }
 
     getName(): string {
@@ -16,7 +25,7 @@ export class TrafficLightPhase {
     }
 
     /**
-     * Duration of the current traffic phase in milliseconds
+     * Duration of the current traffic phase in milliseconds.
      */
     getDuration(): number {
         return this.duration;
@@ -26,7 +35,16 @@ export class TrafficLightPhase {
         return this.allowedMovements;
     }
 
+    /**
+     * Returns whether the requested movement is currently allowed.
+     *
+     * Compare the actual lane transition rather than relying on
+     * Movement object identity. This allows independently-created
+     * Movement instances to represent the same logical movement.
+     */
     allowsMovement(movement: Movement): boolean {
-        return this.allowedMovements.includes(movement);
+        return this.allowedMovements.some((allowedMovement) =>
+            allowedMovement.isEquivalentTo(movement),
+        );
     }
 }

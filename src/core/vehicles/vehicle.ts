@@ -6,11 +6,10 @@ import type { TrafficLightSystem } from '@core/traffic/traffic-light-system';
 
 import { Vector2 } from '@shared/utils/math/vector2';
 import { MathUtils } from '@shared/utils/math/math-utils';
-import { Angle } from '@shared/utils/math/angle';
 
 import type { VehicleState } from './vehicle-state';
 import type { VehicleConfig } from '@shared/config/vehicle-config';
-import type { VehicleDetector } from './vehicle-detector';
+import type { VehicleAhead, VehicleDetector } from './vehicle-detector';
 import type { DestinationGenerator } from './destination-generator';
 
 export class Vehicle {
@@ -23,22 +22,10 @@ export class Vehicle {
     private readonly followingDistance: number;
     private readonly minimumGap: number;
     private readonly length: number;
+    private readonly width: number;
 
-    /*
-     * Maximum visual rotation speed in radians per second.
-     *
-     * 4.0 rad/s gives a reasonably natural turn while still
-     * allowing a U-turn to complete without looking sluggish.
-     */
     private readonly steeringSpeed = 8;
 
-    /*
-     * Distance used to determine the local tangent of the path.
-     *
-     * This is deliberately small. We do NOT look far ahead,
-     * because doing so can skip across multiple path segments
-     * and produce incorrect directions around U-turns.
-     */
     private readonly steeringSampleDistance = 2;
 
     private readonly trafficLightSystem: TrafficLightSystem;
@@ -49,13 +36,31 @@ export class Vehicle {
     private currentSpeed = 0;
     private travelledDistance = 0;
 
-    /*
-     * Visual orientation is independent of the path geometry.
-     */
     private currentAngle = 0;
     private angleInitialized = false;
 
     private stoppedForMovement: Movement | null = null;
+
+    /*
+     * Once a vehicle has committed to crossing a movement,
+     * ordinary following/traffic-light logic must not stop it
+     * in the middle of the intersection.
+     */
+    private clearingMovement: Movement | null = null;
+
+    /*
+     * Cache the current lane index so hot-path code does not
+     * repeatedly convert travelledDistance into a PathLocation.
+     */
+    private currentLaneIndex = 0;
+
+    /*
+     * Cached target angle.
+     *
+     * Grid lanes are straight, so their direction only needs to
+     * be recalculated when the vehicle enters another lane.
+     */
+    private targetAngle = 0;
 
     constructor(
         path: Path,
@@ -81,6 +86,8 @@ export class Vehicle {
 
         this.length = config.length;
 
+        this.width = config.width;
+
         this.trafficLightSystem = trafficLightSystem;
 
         this.vehicleDetector = vehicleDetector;
@@ -88,6 +95,12 @@ export class Vehicle {
         this.pathfinder = pathfinder;
 
         this.destinationGenerator = destinationGenerator;
+
+        this.targetAngle = this.getPathAngle();
+
+        this.currentAngle = this.targetAngle;
+
+        this.angleInitialized = true;
     }
 
     getState(): VehicleState {
@@ -113,6 +126,10 @@ export class Vehicle {
         return this.length;
     }
 
+    getWidth(): number {
+        return this.width;
+    }
+
     getTravelledDistance(): number {
         return this.travelledDistance;
     }
@@ -122,36 +139,49 @@ export class Vehicle {
             return;
         }
 
-        const remainingTime = deltaTime / 1000;
+        let remainingTime = deltaTime / 1000;
 
-        /*
-         * Visual steering is updated every frame.
-         */
+        this.updateCurrentLane();
+
         this.updateAngle(deltaTime);
 
         while (remainingTime > MathUtils.epsilon) {
             /*
-             * A vehicle stopped for a red light remains stopped
-             * until the exact movement becomes allowed.
+             * A vehicle stopped at a prohibited movement remains
+             * stopped until that exact movement becomes allowed.
              */
             if (this.stoppedForMovement !== null) {
                 if (!this.trafficLightSystem.allowsMovement(this.stoppedForMovement)) {
                     this.currentSpeed = 0;
+
                     return;
                 }
 
                 this.stoppedForMovement = null;
             }
 
-            const targetSpeed = this.getTargetSpeed();
+            this.updateCurrentLane();
+
+            this.updateClearingMovement();
+
+            /*
+             * Query the detector once for this update.
+             *
+             * The result is reused for target-speed calculation
+             * and actual distance limiting.
+             */
+            const vehicleAhead =
+                this.clearingMovement === null ? this.vehicleDetector.findVehicleAhead(this) : null;
+
+            const nextMovement = this.path.getNextMovement(this.travelledDistance);
+
+            const targetSpeed = this.getTargetSpeed(nextMovement, vehicleAhead);
 
             const previousSpeed = this.currentSpeed;
 
             this.currentSpeed = this.moveTowardsSpeed(previousSpeed, targetSpeed, remainingTime);
 
-            const redLightStopDistance = this.getRedLightStopDistance();
-
-            const vehicleAhead = this.vehicleDetector.findVehicleAhead(this);
+            const redLightStopDistance = this.getRedLightStopDistance(nextMovement);
 
             const availableDistance = Math.max(
                 0,
@@ -163,14 +193,15 @@ export class Vehicle {
             let distanceToTravel = averageSpeed * remainingTime;
 
             /*
-             * Never cross the red-light stopping point.
+             * Never cross a red-light stopping point.
              */
             if (redLightStopDistance !== null) {
                 distanceToTravel = Math.min(distanceToTravel, Math.max(0, redLightStopDistance));
             }
 
             /*
-             * Never enter the minimum safety gap.
+             * Maintain the following gap only while approaching
+             * an intersection, not while committed to clearing it.
              */
             if (vehicleAhead !== null) {
                 distanceToTravel = Math.min(
@@ -184,39 +215,45 @@ export class Vehicle {
             if (distanceToTravel <= MathUtils.epsilon) {
                 this.currentSpeed = 0;
 
-                this.tryStopAtRedLight();
+                this.tryStopAtRedLight(nextMovement);
 
                 return;
             }
 
             this.travelledDistance += distanceToTravel;
 
-            /*
-             * Update visual steering after movement as well.
-             *
-             * This is important when a frame crosses an
-             * intersection boundary.
-             */
+            this.updateCurrentLane();
+
             this.updateAngle(deltaTime);
 
+            /*
+             * We reached a red-light stopping position.
+             */
             if (
                 redLightStopDistance !== null &&
                 redLightStopDistance - distanceToTravel <= MathUtils.epsilon
             ) {
-                this.tryStopAtRedLight();
+                this.tryStopAtRedLight(nextMovement);
 
                 if (this.stoppedForMovement !== null) {
                     return;
                 }
             }
 
+            /*
+             * Reached destination.
+             */
             if (this.travelledDistance >= this.path.getTotalLength() - MathUtils.epsilon) {
                 this.travelledDistance = this.path.getTotalLength();
 
                 this.changeDestination();
 
+                remainingTime = 0;
+
                 continue;
             }
+
+            this.updateClearingMovement();
 
             return;
         }
@@ -237,26 +274,68 @@ export class Vehicle {
     }
 
     getAngle(): number {
-        if (!this.angleInitialized) {
-            return this.getPathAngle();
-        }
-
         return this.currentAngle;
     }
 
-    /**
-     * Smooths visual rotation toward the actual local
-     * direction of the path.
-     *
-     * Unlike the previous look-ahead implementation, this
-     * never calculates a direction from a point on one road
-     * to a point several segments later.
-     */
-    private updateAngle(deltaTime: number): void {
-        const targetAngle = this.getPathAngle();
+    private updateCurrentLane(): void {
+        const laneIndex = this.path.getLaneIndexAtDistance(this.travelledDistance);
 
+        if (laneIndex === this.currentLaneIndex) {
+            return;
+        }
+
+        this.currentLaneIndex = laneIndex;
+
+        /*
+         * A lane in the grid has a fixed direction.
+         * Only recalculate the steering target when the lane
+         * changes.
+         */
+        this.targetAngle = this.getPathAngle();
+    }
+
+    private updateClearingMovement(): void {
+        if (this.clearingMovement !== null) {
+            const nextMovement = this.path.getNextMovement(this.travelledDistance);
+
+            /*
+             * Once the vehicle is no longer approaching the
+             * movement it committed to, the intersection has
+             * been cleared.
+             */
+            if (nextMovement === null || !this.clearingMovement.isEquivalentTo(nextMovement)) {
+                this.clearingMovement = null;
+            }
+
+            return;
+        }
+
+        const nextMovement = this.path.getNextMovement(this.travelledDistance);
+
+        if (nextMovement === null) {
+            return;
+        }
+
+        const movementDistance = this.path.getMovementDistance(nextMovement);
+
+        if (movementDistance === null) {
+            return;
+        }
+
+        /*
+         * Once we reach the practical stop-line position,
+         * commit to crossing the movement.
+         */
+        const commitDistance = movementDistance - this.stoppingDistance;
+
+        if (this.travelledDistance >= commitDistance - MathUtils.epsilon) {
+            this.clearingMovement = nextMovement;
+        }
+    }
+
+    private updateAngle(deltaTime: number): void {
         if (!this.angleInitialized) {
-            this.currentAngle = targetAngle;
+            this.currentAngle = this.targetAngle;
 
             this.angleInitialized = true;
 
@@ -265,12 +344,12 @@ export class Vehicle {
 
         const deltaSeconds = deltaTime / 1000;
 
-        const angleDifference = this.normalizeAngle(targetAngle - this.currentAngle);
+        const angleDifference = this.normalizeAngle(this.targetAngle - this.currentAngle);
 
         const maxAngleChange = this.steeringSpeed * deltaSeconds;
 
         if (Math.abs(angleDifference) <= maxAngleChange) {
-            this.currentAngle = targetAngle;
+            this.currentAngle = this.targetAngle;
 
             return;
         }
@@ -280,13 +359,6 @@ export class Vehicle {
         );
     }
 
-    /**
-     * Gets the local tangent of the current path segment.
-     *
-     * We sample only a tiny distance forward. When the vehicle
-     * reaches a corner, the target direction changes to the next
-     * segment, and steering smoothly follows it.
-     */
     private getPathAngle(): number {
         const totalLength = this.path.getTotalLength();
 
@@ -294,37 +366,61 @@ export class Vehicle {
             return 0;
         }
 
+        /*
+         * Prefer the current lane's cached direction.
+         *
+         * We only fall back to geometric sampling because that
+         * also handles the beginning/end of paths robustly.
+         */
+        const lanes = this.path.getLanes();
+
+        if (this.currentLaneIndex >= 0 && this.currentLaneIndex < lanes.length) {
+            const lane = lanes[this.currentLaneIndex];
+
+            const start = lane.getStartPosition();
+
+            const end = lane.getEndPosition();
+
+            const dx = end.x - start.x;
+
+            const dy = end.y - start.y;
+
+            if (Math.abs(dx) > MathUtils.epsilon || Math.abs(dy) > MathUtils.epsilon) {
+                return Math.atan2(dy, dx);
+            }
+        }
+
         const currentDistance = MathUtils.clamp(this.travelledDistance, 0, totalLength);
 
         const sampleDistance = Math.min(this.steeringSampleDistance, totalLength);
 
-        /*
-         * Prefer sampling forward.
-         */
         const forwardDistance = Math.min(totalLength, currentDistance + sampleDistance);
 
         const currentPosition = this.path.getPositionAtDistance(currentDistance);
 
         const forwardPosition = this.path.getPositionAtDistance(forwardDistance);
 
-        const forwardDirection = forwardPosition.subtract(currentPosition);
+        const dx = forwardPosition.x - currentPosition.x;
 
-        if (forwardDirection.magnitude() > MathUtils.epsilon) {
-            return Angle.fromVector(forwardDirection);
+        const dy = forwardPosition.y - currentPosition.y;
+
+        if (dx * dx + dy * dy > MathUtils.epsilon * MathUtils.epsilon) {
+            return Math.atan2(dy, dx);
         }
 
-        /*
-         * At the end of the path there may be no forward
-         * distance left, so use a short backward tangent.
-         */
         const backwardDistance = Math.max(0, currentDistance - sampleDistance);
 
         const backwardPosition = this.path.getPositionAtDistance(backwardDistance);
 
-        const backwardDirection = currentPosition.subtract(backwardPosition);
+        const backwardDx = currentPosition.x - backwardPosition.x;
 
-        if (backwardDirection.magnitude() > MathUtils.epsilon) {
-            return Angle.fromVector(backwardDirection);
+        const backwardDy = currentPosition.y - backwardPosition.y;
+
+        if (
+            backwardDx * backwardDx + backwardDy * backwardDy >
+            MathUtils.epsilon * MathUtils.epsilon
+        ) {
+            return Math.atan2(backwardDy, backwardDx);
         }
 
         return this.currentAngle;
@@ -342,16 +438,21 @@ export class Vehicle {
         return angle;
     }
 
-    private getTargetSpeed(): number {
+    private getTargetSpeed(
+        nextMovement: Movement | null,
+        vehicleAhead: VehicleAhead | null,
+    ): number {
         if (this.stoppedForMovement !== null) {
             return 0;
         }
 
-        let targetSpeed = this.getTrafficLightTargetSpeed();
+        let targetSpeed = this.getTrafficLightTargetSpeed(nextMovement);
 
-        const vehicleAhead = this.vehicleDetector.findVehicleAhead(this);
-
-        if (vehicleAhead !== null) {
+        /*
+         * Do not allow ordinary following logic to stop a vehicle
+         * once it has committed to clearing an intersection.
+         */
+        if (vehicleAhead !== null && this.clearingMovement === null) {
             targetSpeed = Math.min(
                 targetSpeed,
                 this.getFollowingTargetSpeed(
@@ -362,6 +463,121 @@ export class Vehicle {
         }
 
         return MathUtils.clamp(targetSpeed, 0, this.maxSpeed);
+    }
+
+    private getTrafficLightTargetSpeed(nextMovement: Movement | null): number {
+        /*
+         * Already committed to this movement.
+         */
+        if (this.clearingMovement !== null) {
+            return this.maxSpeed;
+        }
+
+        if (nextMovement === null) {
+            return this.maxSpeed;
+        }
+
+        if (this.trafficLightSystem.allowsMovement(nextMovement)) {
+            return this.maxSpeed;
+        }
+
+        const distanceToMovement = this.path.getDistanceToMovement(
+            this.travelledDistance,
+            nextMovement,
+        );
+
+        if (distanceToMovement === null) {
+            return this.maxSpeed;
+        }
+
+        const distanceToStop = distanceToMovement - this.stoppingDistance;
+
+        if (distanceToStop <= MathUtils.epsilon) {
+            return 0;
+        }
+
+        if (this.braking <= MathUtils.epsilon) {
+            return this.maxSpeed;
+        }
+
+        /*
+         * Maximum speed that still allows stopping before the
+         * stop line.
+         */
+        const safeSpeed = Math.sqrt(2 * this.braking * distanceToStop);
+
+        return Math.min(this.maxSpeed, Math.max(0, safeSpeed));
+    }
+
+    private getRedLightStopDistance(nextMovement: Movement | null): number | null {
+        if (this.stoppedForMovement !== null) {
+            return 0;
+        }
+
+        /*
+         * Do not stop again after committing to the movement.
+         */
+        if (this.clearingMovement !== null) {
+            return null;
+        }
+
+        if (nextMovement === null) {
+            return null;
+        }
+
+        if (this.trafficLightSystem.allowsMovement(nextMovement)) {
+            return null;
+        }
+
+        const distanceToMovement = this.path.getDistanceToMovement(
+            this.travelledDistance,
+            nextMovement,
+        );
+
+        if (distanceToMovement === null) {
+            return null;
+        }
+
+        return Math.max(0, distanceToMovement - this.stoppingDistance);
+    }
+
+    private tryStopAtRedLight(nextMovement: Movement | null): void {
+        if (this.clearingMovement !== null) {
+            return;
+        }
+
+        if (nextMovement === null) {
+            return;
+        }
+
+        if (this.trafficLightSystem.allowsMovement(nextMovement)) {
+            return;
+        }
+
+        const distanceToMovement = this.path.getDistanceToMovement(
+            this.travelledDistance,
+            nextMovement,
+        );
+
+        if (distanceToMovement === null) {
+            return;
+        }
+
+        const distanceToStop = distanceToMovement - this.stoppingDistance;
+
+        if (distanceToStop > MathUtils.epsilon) {
+            return;
+        }
+
+        const movementDistance = this.path.getMovementDistance(nextMovement);
+
+        if (movementDistance !== null) {
+            this.travelledDistance = Math.max(0, movementDistance - this.stoppingDistance);
+        }
+
+        this.currentSpeed = 0;
+
+        this.stoppedForMovement = nextMovement;
     }
 
     private getFollowingTargetSpeed(gap: number, vehicleAheadSpeed: number): number {
@@ -381,127 +597,6 @@ export class Vehicle {
         const safeSpeed = Math.sqrt(Math.max(0, safeSpeedSquared));
 
         return Math.min(this.maxSpeed, Math.max(vehicleAheadSpeed, safeSpeed));
-    }
-
-    private getTrafficLightTargetSpeed(): number {
-        const nextMovement = this.path.getNextMovement(this.travelledDistance);
-
-        if (nextMovement === null) {
-            return this.maxSpeed;
-        }
-
-        if (this.trafficLightSystem.allowsMovement(nextMovement)) {
-            return this.maxSpeed;
-        }
-
-        const distanceToMovement = this.path.getDistanceToMovement(
-            this.travelledDistance,
-            nextMovement,
-        );
-
-        if (distanceToMovement === null) {
-            return this.maxSpeed;
-        }
-
-        const distanceToStop = distanceToMovement - this.stoppingDistance;
-
-        if (distanceToStop <= 0) {
-            return 0;
-        }
-
-        const brakingDistance = this.getBrakingDistance(this.currentSpeed);
-
-        if (distanceToStop <= brakingDistance) {
-            return 0;
-        }
-
-        return this.maxSpeed;
-    }
-
-    private getRedLightStopDistance(): number | null {
-        if (this.stoppedForMovement !== null) {
-            return 0;
-        }
-
-        const nextMovement = this.path.getNextMovement(this.travelledDistance);
-
-        if (nextMovement === null) {
-            return null;
-        }
-
-        if (this.trafficLightSystem.allowsMovement(nextMovement)) {
-            return null;
-        }
-
-        const distanceToMovement = this.path.getDistanceToMovement(
-            this.travelledDistance,
-            nextMovement,
-        );
-
-        if (distanceToMovement === null) {
-            return null;
-        }
-
-        const distanceToStop = distanceToMovement - this.stoppingDistance;
-
-        if (distanceToStop <= 0) {
-            return 0;
-        }
-
-        const brakingDistance = this.getBrakingDistance(this.currentSpeed);
-
-        if (brakingDistance >= distanceToStop) {
-            return distanceToStop;
-        }
-
-        return null;
-    }
-
-    private tryStopAtRedLight(): void {
-        const nextMovement = this.path.getNextMovement(this.travelledDistance);
-
-        if (nextMovement === null) {
-            return;
-        }
-
-        if (this.trafficLightSystem.allowsMovement(nextMovement)) {
-            return;
-        }
-
-        const distanceToMovement = this.path.getDistanceToMovement(
-            this.travelledDistance,
-            nextMovement,
-        );
-
-        if (distanceToMovement === null) {
-            return;
-        }
-
-        const distanceToStop = distanceToMovement - this.stoppingDistance;
-
-        if (distanceToStop <= MathUtils.epsilon) {
-            const movementDistance = this.path.getMovementDistance(nextMovement);
-
-            if (movementDistance !== null) {
-                this.travelledDistance = Math.max(0, movementDistance - this.stoppingDistance);
-            }
-
-            this.currentSpeed = 0;
-
-            this.stoppedForMovement = nextMovement;
-        }
-    }
-
-    private getBrakingDistance(speed: number): number {
-        if (speed <= MathUtils.epsilon) {
-            return 0;
-        }
-
-        if (this.braking <= MathUtils.epsilon) {
-            return Number.POSITIVE_INFINITY;
-        }
-
-        return (speed * speed) / (2 * this.braking);
     }
 
     private moveTowardsSpeed(
@@ -537,7 +632,13 @@ export class Vehicle {
 
         this.stoppedForMovement = null;
 
-        this.currentAngle = this.getPathAngle();
+        this.clearingMovement = null;
+
+        this.currentLaneIndex = 0;
+
+        this.targetAngle = this.getPathAngle();
+
+        this.currentAngle = this.targetAngle;
 
         this.angleInitialized = true;
     }
