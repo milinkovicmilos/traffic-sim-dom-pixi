@@ -115,19 +115,23 @@ export class TrafficLightPhaseFactory {
     }
 
     private isVerticalIncomingLane(lane: Lane): boolean {
-        const laneAxis = Math.abs(lane.getRotation());
-        const vertical = Math.PI / 2;
+        const start = lane.getStartPosition();
+        const end = lane.getEndPosition();
 
-        // Account for floating point imprecisions
-        return Math.abs(laneAxis - vertical) < 0.0001;
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+
+        return Math.abs(dy) > Math.abs(dx);
     }
 
     private isHorizontalIncomingLane(lane: Lane): boolean {
-        const laneAxis = Math.abs(lane.getRotation());
-        const horizontal = 0;
+        const start = lane.getStartPosition();
+        const end = lane.getEndPosition();
 
-        // Account for floating point imprecisions
-        return Math.abs(laneAxis - horizontal) < 0.0001;
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+
+        return Math.abs(dx) > Math.abs(dy);
     }
 
     /**

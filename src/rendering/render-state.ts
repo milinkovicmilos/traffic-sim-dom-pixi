@@ -12,18 +12,14 @@ const TRAFFIC_LIGHT_RIGHT_OFFSET = 30;
 
 interface SignalGroup {
     color: TrafficLightColor;
-
     remainingTime: number;
-
     movements: Movement[];
 }
 
 export function createRenderState(simulation: Simulation): RenderState {
     return {
         roadMap: simulation.getRoadMap(),
-
         trafficLights: createTrafficLightStates(simulation),
-
         vehicles: simulation.getVehicleStates(),
     };
 }
@@ -44,14 +40,7 @@ function createTrafficLightStates(simulation: Simulation): TrafficLightRenderSta
             continue;
         }
 
-        /*
-         * Group movements by their incoming lane and
-         * current signal state.
-         *
-         * This gives us one physical-looking signal
-         * for one incoming lane when all of its movements
-         * share the same state.
-         */
+        // Group all movements belonging to the same incoming lane.
         const groups = groupMovements(movements, controller);
 
         for (const [groupKey, group] of groups) {
@@ -69,16 +58,16 @@ function groupMovements(
     const groups = new Map<string, SignalGroup>();
 
     const phase = controller.getCurrentPhase();
-
     const remainingTime = controller.getRemainingTime();
 
     for (const movement of movements) {
+        const movementAllowed = phase.allowsMovement(movement);
+
+        const color = getTrafficLightColor(phase.getName(), movementAllowed);
+
         const incomingLane = movement.getIncomingLane();
 
-        const color = getTrafficLightColor(phase.getName(), phase.allowsMovement(movement));
-
         // One physical signal per incoming lane.
-        // U-turn, left, straight and right all share this signal when they are controlled together.
         const groupKey = String(incomingLane.getId());
 
         const existing = groups.get(groupKey);
@@ -136,14 +125,15 @@ function getTrafficLightPosition(lane: Lane): Vector2 {
 
     const directionY = dy / length;
 
-    // Right side of the incoming lane.
+    // Right side of the incoming lane
     const rightX = -directionY;
-
     const rightY = directionX;
 
-    // Place it before the intersection and to the lane's right.
+    // Place the signal before the intersection and
+    // on the right side of the incoming lane.
     return new Vector2(
         end.x - directionX * TRAFFIC_LIGHT_STOP_DISTANCE + rightX * TRAFFIC_LIGHT_RIGHT_OFFSET,
+
         end.y - directionY * TRAFFIC_LIGHT_STOP_DISTANCE + rightY * TRAFFIC_LIGHT_RIGHT_OFFSET,
     );
 }
@@ -151,13 +141,20 @@ function getTrafficLightPosition(lane: Lane): Vector2 {
 function getTrafficLightColor(phaseName: string, movementAllowed: boolean): TrafficLightColor {
     const normalized = phaseName.trim().toLowerCase();
 
+    // A movement that is not part of the current phase
+    // must always remain red to avoid all lights being yellow.
+    if (!movementAllowed) {
+        return 'red';
+    }
+
     if (normalized.includes('yellow')) {
         return 'yellow';
     }
 
-    if (normalized.includes('green') && movementAllowed) {
+    if (normalized.includes('green')) {
         return 'green';
     }
 
+    // All other phases or unknown ones are red
     return 'red';
 }
