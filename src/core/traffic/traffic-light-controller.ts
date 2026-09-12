@@ -8,45 +8,86 @@ export class TrafficLightController {
     private elapsedTime = 0;
 
     constructor(phases: TrafficLightPhase[], initialTime: number = 0) {
+        if (phases.length === 0) {
+            throw new Error('Traffic light controller must contain at least one phase.');
+        }
+
+        for (const phase of phases) {
+            if (phase.getDuration() <= 0) {
+                throw new Error('Traffic light phase duration must be greater than zero.');
+            }
+        }
+
         this.phases = phases;
-        this.elapsedTime = initialTime;
+
+        this.setInitialTime(initialTime);
     }
 
     /**
-     * Update the controller based on the time passed since last update
+     * Updates the controller based on elapsed time in milliseconds.
      *
-     * @param {number} deltaTime - time since last update
+     * Any time that extends beyond a phase boundary is carried
+     * into the next phase instead of being discarded.
      */
-    update(deltaTime: number) {
+    update(deltaTime: number): void {
+        if (deltaTime <= 0) {
+            return;
+        }
+
         this.elapsedTime += deltaTime;
 
-        if (this.elapsedTime >= this.getCurrentPhase().getDuration()) {
-            this.elapsedTime = 0;
+        while (this.elapsedTime >= this.getCurrentPhase().getDuration()) {
+            this.elapsedTime -= this.getCurrentPhase().getDuration();
 
             this.currentPhaseIndex = (this.currentPhaseIndex + 1) % this.phases.length;
         }
     }
 
     /**
-     * Returns the current phase that the traffic light controller is in
+     * Returns the current phase.
      */
     getCurrentPhase(): TrafficLightPhase {
         return this.phases[this.currentPhaseIndex];
     }
 
     /**
-     * Returns the remaining time in current phase in milliseconds
+     * Returns the remaining time in the current phase.
      */
     getRemainingTime(): number {
         return Math.max(0, this.getCurrentPhase().getDuration() - this.elapsedTime);
     }
 
     /**
-     * Returns whether or not the desired movement on the intersection is allowed by the current traffic light phase
+     * Returns whether the requested movement is currently allowed.
      *
-     * @param {Movement} movement - The desired movement by the vehicle
+     * This is the single movement-level permission check used by
+     * the simulation.
      */
     allowsMovement(movement: Movement): boolean {
         return this.getCurrentPhase().allowsMovement(movement);
+    }
+
+    private setInitialTime(initialTime: number): void {
+        if (initialTime <= 0) {
+            this.elapsedTime = 0;
+            return;
+        }
+
+        let remainingTime = initialTime;
+
+        while (remainingTime > 0) {
+            const phaseDuration = this.getCurrentPhase().getDuration();
+
+            if (remainingTime < phaseDuration) {
+                this.elapsedTime = remainingTime;
+                return;
+            }
+
+            remainingTime -= phaseDuration;
+
+            this.currentPhaseIndex = (this.currentPhaseIndex + 1) % this.phases.length;
+        }
+
+        this.elapsedTime = 0;
     }
 }

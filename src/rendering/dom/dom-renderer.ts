@@ -21,6 +21,11 @@ interface TrafficLightElements {
 }
 
 export class DOMRenderer implements Renderer {
+    private static readonly VEHICLE_IMAGE_URL = new URL(
+        '../../assets/vehicle.webp',
+        import.meta.url,
+    ).href;
+
     private readonly container: HTMLElement;
     private readonly padding: number;
     private readonly roadWidth: number;
@@ -35,16 +40,20 @@ export class DOMRenderer implements Renderer {
 
     private readonly trafficLightElements = new Map<string, TrafficLightElements>();
 
-    private readonly vehicleElements = new Map<number, HTMLDivElement>();
+    private readonly vehicleElements = new Map<number, HTMLImageElement>();
 
     private initialized = false;
     private mapInitialized = false;
 
     constructor(options: DOMRendererOptions) {
         this.container = options.container;
+
         this.padding = options.padding;
+
         this.roadWidth = options.roadWidth;
+
         this.vehicleLength = options.vehicleLength;
+
         this.vehicleWidth = options.vehicleWidth;
     }
 
@@ -56,8 +65,11 @@ export class DOMRenderer implements Renderer {
         this.scene = this.createElement('scene');
 
         this.roadsLayer = this.createLayer('roads-layer');
+
         this.lanesLayer = this.createLayer('lanes-layer');
+
         this.trafficLightsLayer = this.createLayer('traffic-lights-layer');
+
         this.vehiclesLayer = this.createLayer('vehicles-layer');
 
         this.scene.append(
@@ -79,11 +91,14 @@ export class DOMRenderer implements Renderer {
 
         if (!this.mapInitialized) {
             this.renderMap(state.roadMap);
+
             this.createTrafficLights(state.trafficLights);
+
             this.mapInitialized = true;
         }
 
         this.updateTrafficLights(state.trafficLights);
+
         this.updateVehicles(state.vehicles);
     }
 
@@ -117,9 +132,11 @@ export class DOMRenderer implements Renderer {
 
     private renderRoad(road: Road): void {
         const start = road.getNodeA().getPosition();
+
         const end = road.getNodeB().getPosition();
 
         const dx = end.x - start.x;
+
         const dy = end.y - start.y;
 
         const centerLength = Math.sqrt(dx * dx + dy * dy);
@@ -155,9 +172,11 @@ export class DOMRenderer implements Renderer {
 
     private renderLaneDivider(road: Road): void {
         const start = road.getNodeA().getPosition();
+
         const end = road.getNodeB().getPosition();
 
         const dx = end.x - start.x;
+
         const dy = end.y - start.y;
 
         const length = Math.sqrt(dx * dx + dy * dy);
@@ -278,9 +297,25 @@ export class DOMRenderer implements Renderer {
         }
     }
 
-    private createVehicle(): HTMLDivElement {
-        const element = this.createElement('vehicle');
+    private createVehicle(): HTMLImageElement {
+        const element = document.createElement('img');
 
+        element.className = 'vehicle';
+
+        element.src = DOMRenderer.VEHICLE_IMAGE_URL;
+
+        element.alt = '';
+
+        element.draggable = false;
+
+        element.decoding = 'async';
+
+        element.setAttribute('aria-hidden', 'true');
+
+        /*
+         * Explicit dimensions keep the vehicle's physical
+         * footprint consistent with the simulation.
+         */
         element.style.width = `${this.vehicleLength}px`;
 
         element.style.height = `${this.vehicleWidth}px`;
@@ -292,6 +327,7 @@ export class DOMRenderer implements Renderer {
         const element = this.createElement(className);
 
         element.style.position = 'absolute';
+
         element.style.inset = '0';
 
         return element;

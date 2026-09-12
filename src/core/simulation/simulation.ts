@@ -16,33 +16,23 @@ import type { SimulationConfig } from '@shared/config/simulation-config';
 
 export class Simulation {
     private readonly config: SimulationConfig;
-
     private readonly roadMap: RoadMap;
     private readonly movements: Map<RoadNode['id'], readonly Movement[]>;
-
     private readonly trafficLightSystem: TrafficLightSystem;
     private readonly pathfinder: Pathfinder;
     private readonly destinationGenerator: DestinationGenerator;
     private readonly vehicleSpawner: VehicleSpawner;
     private readonly vehicleDetector: VehicleDetector;
-
     private readonly vehicles: Vehicle[] = [];
 
     constructor(config: SimulationConfig) {
         this.config = config;
-
         this.roadMap = this.createRoadMap();
-
         this.movements = this.createMovements(this.roadMap);
-
         this.trafficLightSystem = this.createTrafficLightSystem(this.roadMap);
-
         this.pathfinder = new Pathfinder(this.getMovementsArray());
-
         this.destinationGenerator = new DestinationGenerator(this.roadMap.getLanes());
-
         this.vehicleDetector = new VehicleDetector();
-
         this.vehicleSpawner = new VehicleSpawner(
             this.roadMap.getLanes(),
             this.pathfinder,
@@ -51,25 +41,31 @@ export class Simulation {
             this.trafficLightSystem,
             this.vehicleDetector,
         );
-
         this.spawnVehicles(this.config.vehicles.count);
 
+        /*
+         * The detector needs the complete vehicle collection
+         * so every vehicle can detect vehicles ahead.
+         */
         this.vehicleDetector.addVehicles(this.vehicles);
     }
 
     /**
-     * Triggers the update method on every system
+     * Triggers the update method on every simulation system.
      */
     update(deltaTime: number): void {
+        if (deltaTime <= 0) {
+            return;
+        }
         this.trafficLightSystem.update(deltaTime);
-
+        this.vehicleDetector.rebuild();
         for (const vehicle of this.vehicles) {
             vehicle.update(deltaTime);
         }
     }
 
     /**
-     * Spawns a single vehicle on a random lane at random point
+     * Spawns a single vehicle on a random lane at a random point.
      */
     spawnVehicle(): void {
         const vehicle = this.vehicleSpawner.spawn();
@@ -78,9 +74,7 @@ export class Simulation {
     }
 
     /**
-     * Spawns the set amount of vehicles on a random lane at random point
-     *
-     * @param count Number of vehicles to spawn
+     * Spawns the requested number of vehicles.
      */
     spawnVehicles(count: number): void {
         for (let i = 0; i < count; i++) {
@@ -96,6 +90,7 @@ export class Simulation {
 
     private createMovements(roadMap: RoadMap): Map<RoadNode['id'], readonly Movement[]> {
         const map = new Map<RoadNode['id'], readonly Movement[]>();
+
         const generator = new MovementGenerator();
 
         for (const node of roadMap.getNodes()) {
@@ -116,13 +111,17 @@ export class Simulation {
             const nodeId = node.getId();
 
             const nodeMovements = this.getMovements(nodeId);
+
             if (!nodeMovements) {
                 throw new Error(`Could not find the movements for node with id ${nodeId}`);
             }
 
             const phases = trafficLightPhaseFactory.createForNode(node, nodeMovements);
 
-            // If the node is not an intersection
+            /*
+             * No phases means this node is not a
+             * controlled intersection.
+             */
             if (phases.length === 0) {
                 continue;
             }
@@ -131,6 +130,7 @@ export class Simulation {
                 this.config.trafficLightsPhase.greenDuration +
                 this.config.trafficLightsPhase.yellowDuration +
                 this.config.trafficLightsPhase.allRedDuration;
+
             const initialTime = Math.floor(Math.random() * totalLightsDurationCycle);
 
             const controller = new TrafficLightController(phases, initialTime);
@@ -176,7 +176,8 @@ export class Simulation {
     }
 
     /**
-     * Retrieves the vehicle states (position and rotation) of every vehicle in the simulation
+     * Retrieves the vehicle states (position and rotation)
+     * of every vehicle in the simulation.
      */
     getVehicleStates(): readonly VehicleState[] {
         return this.vehicles.map((vehicle) => vehicle.getState());

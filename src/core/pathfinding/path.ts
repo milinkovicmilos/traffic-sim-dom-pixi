@@ -88,7 +88,7 @@ export class Path {
      */
     getPathLocationAtDistance(distance: number): PathLocation {
         const totalLength = this.getTotalLength();
-        const clampedDistance = MathUtils.clamp(0, distance, totalLength);
+        const clampedDistance = MathUtils.clamp(distance, 0, totalLength);
 
         if (this.lanes.length === 1) {
             return new PathLocation(

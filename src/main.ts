@@ -24,8 +24,8 @@ import { BenchmarkMonitor, type BenchmarkSnapshot } from '@benchmarking/benchmar
 ============================================================= */
 
 const gridConfig: GridConfig = {
-    rows: 24,
-    columns: 24,
+    rows: 5,
+    columns: 5,
     blockSize: 250,
     roadWidth: 30,
     laneWidth: 15,
@@ -39,14 +39,15 @@ const trafficLightsPhaseConfig: TrafficLightPhaseConfig = {
 };
 
 const vehiclesConfig: VehicleConfig = {
-    acceleration: 10,
-    braking: 10,
-    followDistance: 25,
+    acceleration: 30,
+    braking: 50,
     length: 18,
     width: 8,
-    maxSpeed: 100,
+    maxSpeed: 50,
     count: 100,
-    stoppingDistance: 25,
+    followDistance: 20,
+    minimumGap: 15,
+    stoppingDistance: 35,
 };
 
 /*

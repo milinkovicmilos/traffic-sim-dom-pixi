@@ -267,15 +267,15 @@ body {
 .vehicle {
     position: absolute;
     z-index: 40;
-    /* The actual dimensions are supplied
-       by DOMRenderer from VehicleConfig. */
-    width: 10px;
-    height: 20px;
+    display: block;
+    width: 18px;
+    height: 8px;
+    object-fit: fill;
+    object-position: center;
     transform-origin: 50% 50%;
-    background: #38bdf8;
-    border: 1px solid #e0f2fe;
-    border-radius: 3px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+    user-select: none;
+    pointer-events: none;
+    -webkit-user-drag: none;
     will-change: transform;
 }
 

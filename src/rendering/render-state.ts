@@ -2,10 +2,11 @@ import type { RoadNode } from '@core/map/road-node';
 import type { Movement } from '@core/traffic/movement';
 import type { TrafficLightController } from '@core/traffic/traffic-light-controller';
 import type { Simulation } from '@core/simulation/simulation';
+import type { Lane } from '@core/map/lane';
 
 import type { RenderState, TrafficLightColor, TrafficLightRenderState } from './renderer';
+
 import { Vector2 } from '@shared/utils/math/vector2';
-import type { Lane } from '@core/map/lane';
 
 const TRAFFIC_LIGHT_STOP_DISTANCE = 38;
 const TRAFFIC_LIGHT_RIGHT_OFFSET = 30;
@@ -40,7 +41,6 @@ function createTrafficLightStates(simulation: Simulation): TrafficLightRenderSta
             continue;
         }
 
-        // Group all movements belonging to the same incoming lane.
         const groups = groupMovements(movements, controller);
 
         for (const [groupKey, group] of groups) {
@@ -51,6 +51,12 @@ function createTrafficLightStates(simulation: Simulation): TrafficLightRenderSta
     return result;
 }
 
+/**
+ * Creates one rendered signal for each incoming lane.
+ *
+ * The renderer uses the controller's movement permission,
+ * rather than duplicating any traffic-light logic.
+ */
 function groupMovements(
     movements: readonly Movement[],
     controller: TrafficLightController,
@@ -58,29 +64,38 @@ function groupMovements(
     const groups = new Map<string, SignalGroup>();
 
     const phase = controller.getCurrentPhase();
+
     const remainingTime = controller.getRemainingTime();
 
     for (const movement of movements) {
-        const movementAllowed = phase.allowsMovement(movement);
-
-        const color = getTrafficLightColor(phase.getName(), movementAllowed);
-
         const incomingLane = movement.getIncomingLane();
 
-        // One physical signal per incoming lane.
         const groupKey = String(incomingLane.getId());
 
         const existing = groups.get(groupKey);
 
         if (existing) {
             existing.movements.push(movement);
-        } else {
-            groups.set(groupKey, {
-                color,
-                remainingTime,
-                movements: [movement],
-            });
+            continue;
         }
+
+        /*
+         * One physical signal is drawn for the incoming lane.
+         *
+         * In the normal intersection setup all movements from
+         * the same incoming lane share the same signal phase.
+         *
+         * Use the first movement as the lane signal's state,
+         * but obtain permission directly from the controller,
+         * which is the same logic used by vehicles.
+         */
+        const movementAllowed = controller.allowsMovement(movement);
+
+        groups.set(groupKey, {
+            color: getTrafficLightColor(phase.getName(), movementAllowed),
+            remainingTime,
+            movements: [movement],
+        });
     }
 
     return groups;
@@ -95,13 +110,9 @@ function createTrafficLightState(
 
     return {
         key: `${node.getId()}:${groupKey}`,
-
         nodeId: node.getId(),
-
         position: getTrafficLightPosition(incomingLane),
-
         color: group.color,
-
         remainingTime: group.remainingTime,
     };
 }
@@ -125,12 +136,11 @@ function getTrafficLightPosition(lane: Lane): Vector2 {
 
     const directionY = dy / length;
 
-    // Right side of the incoming lane
+    // Right side of the incoming lane.
     const rightX = -directionY;
+
     const rightY = directionX;
 
-    // Place the signal before the intersection and
-    // on the right side of the incoming lane.
     return new Vector2(
         end.x - directionX * TRAFFIC_LIGHT_STOP_DISTANCE + rightX * TRAFFIC_LIGHT_RIGHT_OFFSET,
 
@@ -141,8 +151,10 @@ function getTrafficLightPosition(lane: Lane): Vector2 {
 function getTrafficLightColor(phaseName: string, movementAllowed: boolean): TrafficLightColor {
     const normalized = phaseName.trim().toLowerCase();
 
-    // A movement that is not part of the current phase
-    // must always remain red to avoid all lights being yellow.
+    /*
+     * Never display green/yellow for a movement that the
+     * controller says is prohibited.
+     */
     if (!movementAllowed) {
         return 'red';
     }
@@ -155,6 +167,5 @@ function getTrafficLightColor(phaseName: string, movementAllowed: boolean): Traf
         return 'green';
     }
 
-    // All other phases or unknown ones are red
     return 'red';
 }

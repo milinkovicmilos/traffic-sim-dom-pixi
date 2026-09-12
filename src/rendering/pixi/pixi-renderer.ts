@@ -1,5 +1,6 @@
 import {
     Application,
+    Assets,
     Container,
     Graphics,
     Particle,
@@ -44,9 +45,37 @@ interface TrafficLightRenderObject {
     timer: Text;
 
     lastColor: TrafficLightRenderState['color'] | null;
+
     lastTimerText: string;
 }
 
+/*
+ * =============================================================
+ * VEHICLE IMAGE
+ * =============================================================
+ *
+ * Vite resolves this at build time.
+ *
+ * The source image is downsampled once during initialization
+ * into a small texture that matches the simulation scale.
+ */
+const VEHICLE_IMAGE_URL = new URL('../../assets/vehicle.webp', import.meta.url).href;
+
+/*
+ * Generate the texture at 4x the logical simulation dimensions.
+ *
+ * Example:
+ * vehicleLength = 18
+ * vehicleWidth  = 8
+ *
+ * Actual GPU texture:
+ * 72 x 32
+ */
+const VEHICLE_TEXTURE_SCALE = 4;
+
+/*
+ * Traffic light dimensions.
+ */
 const TRAFFIC_LIGHT_WIDTH = 18;
 const TRAFFIC_LIGHT_HEIGHT = 38;
 
@@ -69,13 +98,12 @@ const ACTIVE_LAMP_ALPHA = 1;
 /*
  * High resolution source artwork.
  *
- * The visible traffic light is still only 18x38 logical pixels.
+ * The final logical traffic light is still only 18x38.
  */
 const TRAFFIC_LIGHT_TEXTURE_SCALE = 4;
 
 /*
- * Glow remains separate from the texture so it can change state without
- * rebuilding the traffic-light artwork.
+ * Glow remains separate from the texture.
  */
 const GLOW_OUTER_RADIUS = 11;
 const GLOW_MIDDLE_RADIUS = 8;
@@ -86,8 +114,6 @@ const GLOW_MIDDLE_ALPHA = 0.14;
 const GLOW_INNER_ALPHA = 0.24;
 
 const VEHICLE_BORDER_RADIUS = 3;
-
-const VEHICLE_TEXTURE_SCALE = 4;
 
 export class PixiRenderer implements Renderer {
     private readonly container: HTMLElement;
@@ -110,19 +136,25 @@ export class PixiRenderer implements Renderer {
     private initialized = false;
     private mapInitialized = false;
 
-    private readonly trafficLightElements = new Map<string, TrafficLightRenderObject>();
-
-    private readonly vehicleParticles: Particle[] = [];
-
+    /*
+     * One shared vehicle texture for every vehicle.
+     */
     private vehicleTexture!: Texture;
 
     /*
-     * Traffic light artwork textures are shared by every light.
+     * Shared traffic light textures.
      */
     private trafficLightHousingTexture!: Texture;
     private trafficLightRedTexture!: Texture;
     private trafficLightYellowTexture!: Texture;
     private trafficLightGreenTexture!: Texture;
+
+    private readonly trafficLightElements = new Map<string, TrafficLightRenderObject>();
+
+    /*
+     * Persistent particle objects.
+     */
+    private readonly vehicleParticles: Particle[] = [];
 
     private mapMinX = 0;
     private mapMinY = 0;
@@ -147,10 +179,15 @@ export class PixiRenderer implements Renderer {
 
     constructor(options: PixiRendererOptions) {
         this.container = options.container;
+
         this.padding = options.padding;
+
         this.roadWidth = options.roadWidth;
+
         this.vehicleLength = options.vehicleLength;
+
         this.vehicleWidth = options.vehicleWidth;
+
         this.preference = options.preference ?? 'webgl';
     }
 
@@ -173,7 +210,7 @@ export class PixiRenderer implements Renderer {
             autoDensity: true,
 
             /*
-             * Keep hard-edged simulation geometry crisp.
+             * Keep the simulation geometry crisp.
              */
             antialias: false,
 
@@ -184,12 +221,20 @@ export class PixiRenderer implements Renderer {
         });
 
         this.scene = new Container();
+
         this.world = new Container();
 
         this.roadsLayer = new Container();
+
         this.lanesLayer = new Container();
+
         this.trafficLightsLayer = new Container();
 
+        /*
+         * This is the high-performance vehicle layer.
+         *
+         * Only position and rotation are dynamic.
+         */
         this.vehiclesLayer = new ParticleContainer({
             dynamicProperties: {
                 position: true,
@@ -202,6 +247,7 @@ export class PixiRenderer implements Renderer {
         });
 
         this.scene.label = 'scene';
+
         this.world.label = 'world';
 
         this.roadsLayer.label = 'roads-layer';
@@ -213,10 +259,14 @@ export class PixiRenderer implements Renderer {
         this.vehiclesLayer.label = 'vehicles-layer';
 
         /*
-         * Create every shared texture exactly once.
+         * Load the actual source image and create ONE small
+         * simulation-sized GPU texture from it.
          */
-        this.vehicleTexture = this.createVehicleTexture();
+        this.vehicleTexture = await this.createVehicleTexture();
 
+        /*
+         * Traffic light textures are created once.
+         */
         this.trafficLightHousingTexture = this.createTrafficLightHousingTexture();
 
         this.trafficLightRedTexture = this.createTrafficLightLampTexture(RED_COLOR);
@@ -253,6 +303,7 @@ export class PixiRenderer implements Renderer {
         this.app.canvas.style.boxSizing = 'border-box';
 
         this.bindPointerEvents();
+
         this.bindResize();
 
         this.initialized = true;
@@ -275,6 +326,9 @@ export class PixiRenderer implements Renderer {
             this.resizeViewport();
         }
 
+        /*
+         * Dynamic work only.
+         */
         this.updateTrafficLights(state.trafficLights);
 
         this.updateVehicles(state.vehicles);
@@ -340,76 +394,121 @@ export class PixiRenderer implements Renderer {
     // VEHICLE TEXTURE
     // =====================================================================
 
-    private createVehicleTexture(): Texture {
+    /**
+     * Loads vehicle.webp once and downsamples it into a tiny texture
+     * appropriate for the actual simulation dimensions.
+     *
+     * This keeps a potentially large source image out of the hot
+     * rendering path.
+     */
+    private async createVehicleTexture(): Promise<Texture> {
+        const sourceTexture = await Assets.load<Texture>(VEHICLE_IMAGE_URL);
+
+        if (!sourceTexture) {
+            throw new Error(`Unable to load vehicle image: ${VEHICLE_IMAGE_URL}`);
+        }
+
         const scale = VEHICLE_TEXTURE_SCALE;
+
+        const targetWidth = Math.max(1, Math.ceil(this.vehicleLength * scale));
+
+        const targetHeight = Math.max(1, Math.ceil(this.vehicleWidth * scale));
 
         const canvas = document.createElement('canvas');
 
-        canvas.width = Math.max(1, Math.ceil(this.vehicleLength * scale));
+        canvas.width = targetWidth;
 
-        canvas.height = Math.max(1, Math.ceil(this.vehicleWidth * scale));
+        canvas.height = targetHeight;
 
         const context = canvas.getContext('2d');
 
         if (!context) {
+            sourceTexture.destroy(true);
+
             throw new Error('Unable to create vehicle texture canvas.');
         }
 
-        context.scale(scale, scale);
+        /*
+         * High-quality one-time resize.
+         *
+         * This cost happens once during renderer initialization,
+         * not once per vehicle or once per frame.
+         */
+        context.imageSmoothingEnabled = true;
 
-        this.drawRoundedRectPath(
-            context,
-            0.5,
-            0.5,
-            Math.max(0, this.vehicleLength - 1),
-            Math.max(0, this.vehicleWidth - 1),
-            VEHICLE_BORDER_RADIUS,
-        );
+        context.imageSmoothingQuality = 'high';
 
-        context.fillStyle = '#38bdf8';
+        /*
+         * Preserve alpha from the source WEBP.
+         */
+        context.clearRect(0, 0, targetWidth, targetHeight);
 
-        context.fill();
+        const source = sourceTexture.source.resource;
 
-        context.strokeStyle = '#e0f2fe';
+        if (!this.isCanvasImageSource(source)) {
+            sourceTexture.destroy(true);
 
-        context.lineWidth = 1;
+            throw new Error('Vehicle texture source is not a drawable image.');
+        }
 
-        context.stroke();
+        /*
+         * Draw the source artwork into the exact simulation
+         * aspect ratio.
+         */
+        context.drawImage(source, 0, 0, targetWidth, targetHeight);
 
-        return Texture.from(canvas, true);
+        /*
+         * Convert the small canvas into the texture actually shared
+         * by all vehicle particles.
+         */
+        const texture = Texture.from(canvas, true);
+
+        /*
+         * The image is frequently rendered smaller than the source.
+         * Linear filtering is appropriate for normal vehicle artwork.
+         */
+        texture.source.scaleMode = 'linear';
+
+        /*
+         * We don't need mipmaps for an 18x8 sprite that has a fixed
+         * simulation size.
+         *
+         * This avoids unnecessary mipmap generation/upload work.
+         */
+        texture.source.autoGenerateMipmaps = false;
+
+        /*
+         * The temporary source texture loaded through Assets is no
+         * longer needed after the image has been copied to our tiny
+         * canvas texture.
+         */
+        sourceTexture.destroy(true);
+
+        return texture;
     }
 
-    private drawRoundedRectPath(
-        context: CanvasRenderingContext2D,
-        x: number,
-        y: number,
-        width: number,
-        height: number,
-        radius: number,
-    ): void {
-        const r = Math.min(radius, width / 2, height / 2);
+    private isCanvasImageSource(value: unknown): value is CanvasImageSource {
+        if (typeof HTMLImageElement !== 'undefined' && value instanceof HTMLImageElement) {
+            return true;
+        }
 
-        context.beginPath();
+        if (typeof HTMLCanvasElement !== 'undefined' && value instanceof HTMLCanvasElement) {
+            return true;
+        }
 
-        context.moveTo(x + r, y);
+        if (typeof HTMLVideoElement !== 'undefined' && value instanceof HTMLVideoElement) {
+            return true;
+        }
 
-        context.lineTo(x + width - r, y);
+        if (typeof ImageBitmap !== 'undefined' && value instanceof ImageBitmap) {
+            return true;
+        }
 
-        context.quadraticCurveTo(x + width, y, x + width, y + r);
+        if (typeof OffscreenCanvas !== 'undefined' && value instanceof OffscreenCanvas) {
+            return true;
+        }
 
-        context.lineTo(x + width, y + height - r);
-
-        context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
-
-        context.lineTo(x + r, y + height);
-
-        context.quadraticCurveTo(x, y + height, x, y + height - r);
-
-        context.lineTo(x, y + r);
-
-        context.quadraticCurveTo(x, y, x + r, y);
-
-        context.closePath();
+        return false;
     }
 
     // =====================================================================
@@ -433,13 +532,6 @@ export class PixiRenderer implements Renderer {
 
         context.scale(scale, scale);
 
-        /*
-         * DOM equivalent:
-         *
-         * background: #111827;
-         * border: 1px solid #374151;
-         * border-radius: 5px;
-         */
         this.drawRoundedRectPath(
             context,
             0.5,
@@ -485,10 +577,6 @@ export class PixiRenderer implements Renderer {
 
         context.closePath();
 
-        /*
-         * The texture itself is completely opaque.
-         * Lamp opacity is controlled by Sprite.alpha.
-         */
         context.fillStyle = this.numberToCssColor(color);
 
         context.fill();
@@ -500,12 +588,46 @@ export class PixiRenderer implements Renderer {
         return `#${color.toString(16).padStart(6, '0')}`;
     }
 
+    private drawRoundedRectPath(
+        context: CanvasRenderingContext2D,
+        x: number,
+        y: number,
+        width: number,
+        height: number,
+        radius: number,
+    ): void {
+        const r = Math.min(radius, width / 2, height / 2);
+
+        context.beginPath();
+
+        context.moveTo(x + r, y);
+
+        context.lineTo(x + width - r, y);
+
+        context.quadraticCurveTo(x + width, y, x + width, y + r);
+
+        context.lineTo(x + width, y + height - r);
+
+        context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+
+        context.lineTo(x + r, y + height);
+
+        context.quadraticCurveTo(x, y + height, x, y + height - r);
+
+        context.lineTo(x, y + r);
+
+        context.quadraticCurveTo(x, y, x + r, y);
+
+        context.closePath();
+    }
+
     // =====================================================================
     // MAP
     // =====================================================================
 
     private buildMap(roadMap: RoadMap): void {
         this.roadsLayer.removeChildren();
+
         this.lanesLayer.removeChildren();
 
         const nodes = roadMap.getNodes();
@@ -538,6 +660,7 @@ export class PixiRenderer implements Renderer {
 
             this.mapMinX = minX;
             this.mapMinY = minY;
+
             this.mapMaxX = maxX;
             this.mapMaxY = maxY;
         }
@@ -557,6 +680,7 @@ export class PixiRenderer implements Renderer {
 
         for (const road of roadMap.getRoads()) {
             this.renderRoad(road);
+
             this.renderLaneDivider(road);
         }
 
@@ -681,16 +805,8 @@ export class PixiRenderer implements Renderer {
     private createTrafficLight(state: TrafficLightRenderState): TrafficLightRenderObject {
         const root = new Container();
 
-        root.alpha = 1;
-
         root.position.set(this.offsetX(state.position.x), this.offsetY(state.position.y));
 
-        /*
-         * High-resolution shared housing texture.
-         *
-         * The texture is physically 4x larger, but we display it at exactly
-         * 18x38 logical pixels.
-         */
         const housing = new Sprite(this.trafficLightHousingTexture);
 
         housing.anchor.set(0.5, 0.5);
@@ -699,11 +815,9 @@ export class PixiRenderer implements Renderer {
 
         housing.height = TRAFFIC_LIGHT_HEIGHT;
 
-        housing.alpha = 1;
-
         const red = this.createLamp(
             this.trafficLightRedTexture,
-            -(TRAFFIC_LIGHT_HEIGHT / 2) + TRAFFIC_LIGHT_PADDING,
+            -TRAFFIC_LIGHT_HEIGHT / 2 + TRAFFIC_LIGHT_PADDING,
         );
 
         const yellow = this.createLamp(this.trafficLightYellowTexture, -LAMP_SIZE / 2);
@@ -726,14 +840,6 @@ export class PixiRenderer implements Renderer {
 
         timer.position.set(TRAFFIC_LIGHT_WIDTH / 2 + TRAFFIC_LIGHT_TIMER_OFFSET, 0);
 
-        timer.alpha = 1;
-
-        /*
-         * Housing first.
-         * Glows behind lamps.
-         * Actual lamps above glows.
-         * Timer above everything.
-         */
         root.addChild(
             housing,
 
@@ -758,12 +864,17 @@ export class PixiRenderer implements Renderer {
 
         const object: TrafficLightRenderObject = {
             root,
+
             housing,
+
             red,
             yellow,
             green,
+
             timer,
+
             lastColor: null,
+
             lastTimerText: '',
         };
 
@@ -783,10 +894,6 @@ export class PixiRenderer implements Renderer {
 
         lamp.position.set(0, y + LAMP_SIZE / 2);
 
-        /*
-         * Texture itself is opaque.
-         * This alpha controls inactive/active brightness.
-         */
         lamp.alpha = INACTIVE_LAMP_ALPHA;
 
         const glowOuter = new Graphics();
@@ -799,6 +906,7 @@ export class PixiRenderer implements Renderer {
         glowOuter.position.set(-GLOW_OUTER_RADIUS, y + LAMP_SIZE / 2 - GLOW_OUTER_RADIUS);
 
         glowOuter.visible = false;
+
         glowOuter.alpha = 0;
 
         const glowMiddle = new Graphics();
@@ -811,6 +919,7 @@ export class PixiRenderer implements Renderer {
         glowMiddle.position.set(-GLOW_MIDDLE_RADIUS, y + LAMP_SIZE / 2 - GLOW_MIDDLE_RADIUS);
 
         glowMiddle.visible = false;
+
         glowMiddle.alpha = 0;
 
         const glowInner = new Graphics();
@@ -823,6 +932,7 @@ export class PixiRenderer implements Renderer {
         glowInner.position.set(-GLOW_INNER_RADIUS, y + LAMP_SIZE / 2 - GLOW_INNER_RADIUS);
 
         glowInner.visible = false;
+
         glowInner.alpha = 0;
 
         return {
@@ -849,23 +959,29 @@ export class PixiRenderer implements Renderer {
         elements: TrafficLightRenderObject,
         state: TrafficLightRenderState,
     ): void {
-        /*
-         * The container and housing remain fully visible.
-         */
-        elements.root.alpha = 1;
-        elements.housing.alpha = 1;
-        elements.timer.alpha = 1;
-
         if (elements.lastColor !== state.color) {
-            this.setLampState(elements.red, state.color === 'red', RED_COLOR);
+            elements.red.lamp.alpha =
+                state.color === 'red' ? ACTIVE_LAMP_ALPHA : INACTIVE_LAMP_ALPHA;
 
-            this.setLampState(elements.yellow, state.color === 'yellow', YELLOW_COLOR);
+            elements.yellow.lamp.alpha =
+                state.color === 'yellow' ? ACTIVE_LAMP_ALPHA : INACTIVE_LAMP_ALPHA;
 
-            this.setLampState(elements.green, state.color === 'green', GREEN_COLOR);
+            elements.green.lamp.alpha =
+                state.color === 'green' ? ACTIVE_LAMP_ALPHA : INACTIVE_LAMP_ALPHA;
+
+            this.setGlowState(elements.red, state.color === 'red', RED_COLOR);
+
+            this.setGlowState(elements.yellow, state.color === 'yellow', YELLOW_COLOR);
+
+            this.setGlowState(elements.green, state.color === 'green', GREEN_COLOR);
 
             elements.lastColor = state.color;
         }
 
+        /*
+         * Timer text is only regenerated when the visible
+         * 0.1 second value changes.
+         */
         const timerText = `${(state.remainingTime / 1000).toFixed(1)}s`;
 
         if (elements.lastTimerText !== timerText) {
@@ -875,48 +991,34 @@ export class PixiRenderer implements Renderer {
         }
     }
 
-    private setLampState(lamp: LampRenderObject, active: boolean, color: number): void {
-        if (active) {
-            lamp.lamp.alpha = ACTIVE_LAMP_ALPHA;
+    private setGlowState(lamp: LampRenderObject, active: boolean, color: number): void {
+        if (!active) {
+            lamp.glowOuter.visible = false;
 
-            /*
-             * Re-color the existing glow graphics.
-             *
-             * The geometry stays persistent.
-             */
-            this.setGraphicsFillColor(lamp.glowOuter, color, GLOW_OUTER_ALPHA);
+            lamp.glowMiddle.visible = false;
 
-            this.setGraphicsFillColor(lamp.glowMiddle, color, GLOW_MIDDLE_ALPHA);
-
-            this.setGraphicsFillColor(lamp.glowInner, color, GLOW_INNER_ALPHA);
-
-            lamp.glowOuter.visible = true;
-            lamp.glowMiddle.visible = true;
-            lamp.glowInner.visible = true;
+            lamp.glowInner.visible = false;
 
             return;
         }
 
-        lamp.lamp.alpha = INACTIVE_LAMP_ALPHA;
+        lamp.glowOuter.tint = color;
 
-        lamp.glowOuter.visible = false;
-        lamp.glowMiddle.visible = false;
-        lamp.glowInner.visible = false;
+        lamp.glowMiddle.tint = color;
 
-        lamp.glowOuter.alpha = 0;
-        lamp.glowMiddle.alpha = 0;
-        lamp.glowInner.alpha = 0;
-    }
+        lamp.glowInner.tint = color;
 
-    private setGraphicsFillColor(graphics: Graphics, color: number, alpha: number): void {
-        /*
-         * The geometry was already created. We only need the visual alpha.
-         *
-         * Tint is not used here because the glow graphics have already been
-         * built with white fill.
-         */
-        graphics.tint = color;
-        graphics.alpha = alpha;
+        lamp.glowOuter.alpha = GLOW_OUTER_ALPHA;
+
+        lamp.glowMiddle.alpha = GLOW_MIDDLE_ALPHA;
+
+        lamp.glowInner.alpha = GLOW_INNER_ALPHA;
+
+        lamp.glowOuter.visible = true;
+
+        lamp.glowMiddle.visible = true;
+
+        lamp.glowInner.visible = true;
     }
 
     // =====================================================================
@@ -924,9 +1026,19 @@ export class PixiRenderer implements Renderer {
     // =====================================================================
 
     private updateVehicles(vehicles: readonly VehicleState[]): void {
-        this.ensureVehicleCount(vehicles.length);
+        const count = vehicles.length;
 
-        for (let i = 0; i < vehicles.length; i += 1) {
+        this.ensureVehicleCount(count);
+
+        /*
+         * Critical hot loop:
+         *
+         * Only position and rotation change.
+         *
+         * ParticleContainer uploads these dynamic properties
+         * efficiently to the GPU.
+         */
+        for (let i = 0; i < count; i += 1) {
             const vehicle = vehicles[i];
 
             const particle = this.vehicleParticles[i];
@@ -946,47 +1058,77 @@ export class PixiRenderer implements Renderer {
             return;
         }
 
+        /*
+         * Vehicle count normally remains constant, so this path
+         * should only run when the simulation count changes.
+         */
         if (count > currentCount) {
             for (let i = currentCount; i < count; i += 1) {
-                const particle = new Particle({
-                    texture: this.vehicleTexture,
-
-                    x: 0,
-                    y: 0,
-
-                    /*
-                     * The texture is already high resolution, but its
-                     * displayed dimensions remain the intended 18x8.
-                     */
-                    scaleX: 1 / VEHICLE_TEXTURE_SCALE,
-
-                    scaleY: 1 / VEHICLE_TEXTURE_SCALE,
-
-                    anchorX: 0.5,
-                    anchorY: 0.5,
-
-                    rotation: 0,
-
-                    tint: 0xffffff,
-                });
+                const particle = this.createVehicle();
 
                 this.vehicleParticles.push(particle);
 
                 this.vehiclesLayer.addParticle(particle);
             }
 
+            /*
+             * Static particle properties were added.
+             *
+             * According to Pixi's ParticleContainer model,
+             * update() is required after changing static particle
+             * properties or the particle list.
+             */
             this.vehiclesLayer.update();
 
             return;
         }
 
+        /*
+         * Remove particles that are no longer required.
+         */
         this.vehiclesLayer.removeParticles(count, currentCount);
 
         this.vehicleParticles.length = count;
     }
 
+    private createVehicle(): Particle {
+        const textureWidth = this.vehicleTexture.width;
+
+        const textureHeight = this.vehicleTexture.height;
+
+        if (textureWidth <= 0 || textureHeight <= 0) {
+            throw new Error('Vehicle texture has invalid dimensions.');
+        }
+
+        /*
+         * Because the source was already downsampled to
+         * vehicleLength * VEHICLE_TEXTURE_SCALE,
+         * this scale is constant for every vehicle.
+         */
+        const scale = 1 / VEHICLE_TEXTURE_SCALE;
+
+        return new Particle({
+            texture: this.vehicleTexture,
+
+            x: 0,
+            y: 0,
+
+            scaleX: scale,
+
+            scaleY: scale,
+
+            anchorX: 0.5,
+
+            anchorY: 0.5,
+
+            rotation: 0,
+
+            tint: 0xffffff,
+        });
+    }
+
     // =====================================================================
-    // CAMERA / COORDINATES
+    // CAMERA
     // =====================================================================
 
     private offsetX(x: number): number {
@@ -1055,7 +1197,7 @@ export class PixiRenderer implements Renderer {
     }
 
     // =====================================================================
-    // POINTER / CAMERA DRAG
+    // POINTER
     // =====================================================================
 
     private bindPointerEvents(): void {
@@ -1120,6 +1262,7 @@ export class PixiRenderer implements Renderer {
         this.cameraY = this.dragOriginY + (event.clientY - this.dragStartY);
 
         this.clampCamera();
+
         this.updateCameraTransform();
     };
 
