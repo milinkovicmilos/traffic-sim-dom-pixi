@@ -49,12 +49,30 @@ const vehiclesConfig: VehicleConfig = {
     stoppingDistance: 25,
 };
 
-const simulationConfig: SimulationConfig = {
-    grid: gridConfig,
-    trafficLightsPhase: trafficLightsPhaseConfig,
-    vehicles: vehiclesConfig,
-    seed: Math.random(),
-};
+/*
+ * One seed for the lifetime of the application.
+ *
+ * Later benchmark presets can replace this with an explicit seed.
+ */
+const scenarioSeed = Math.random();
+
+function createSimulationConfig(): SimulationConfig {
+    return {
+        grid: {
+            ...gridConfig,
+        },
+
+        trafficLightsPhase: {
+            ...trafficLightsPhaseConfig,
+        },
+
+        vehicles: {
+            ...vehiclesConfig,
+        },
+
+        seed: scenarioSeed,
+    };
+}
 
 /* =============================================================
    APPLICATION UI
@@ -68,31 +86,62 @@ if (!app) {
 
 app.innerHTML = `
     <div class="simulation-toolbar">
-        <h1 class="simulation-title">
-            Traffic Simulation
-        </h1>
-
+        <div class="simulation-toolbar-left">
+            <h1 class="simulation-title">
+                Traffic Simulation
+            </h1>
+            <div class="scenario-controls">
+                <label class="scenario-control">
+                    <span>Rows</span>
+                    <input
+                        id="rows-input"
+                        type="number"
+                        min="2"
+                        step="1"
+                        value="${gridConfig.rows}"
+                        inputmode="numeric"
+                    />
+                </label>
+                <label class="scenario-control">
+                    <span>Columns</span>
+                    <input
+                        id="columns-input"
+                        type="number"
+                        min="2"
+                        step="1"
+                        value="${gridConfig.columns}"
+                        inputmode="numeric"
+                    />
+                </label>
+                <label class="scenario-control">
+                    <span>Vehicles</span>
+                    <input
+                        id="vehicles-input"
+                        type="number"
+                        min="1"
+                        step="1"
+                        value="${vehiclesConfig.count}"
+                        inputmode="numeric"
+                    />
+                </label>
+            </div>
+        </div>
         <label class="renderer-selector">
             <span>Renderer</span>
-
             <select id="renderer-select">
                 <option value="dom">
                     DOM
                 </option>
-
                 <option value="pixi-webgl">
                     PixiJS WebGL
                 </option>
-
                 <option value="pixi-webgpu">
                     PixiJS WebGPU
                 </option>
             </select>
         </label>
     </div>
-
     <div class="simulation-body">
-
         <div class="simulation-main">
             <div
                 id="simulation-root"
@@ -106,12 +155,10 @@ app.innerHTML = `
                         id="dom-renderer-host"
                         class="renderer-host"
                     ></div>
-
                     <div
                         id="pixi-webgl-renderer-host"
                         class="renderer-host"
                     ></div>
-
                     <div
                         id="pixi-webgpu-renderer-host"
                         class="renderer-host"
@@ -119,7 +166,6 @@ app.innerHTML = `
                 </div>
             </div>
         </div>
-
         <aside
             id="benchmark-panel"
             class="benchmark-panel"
@@ -127,7 +173,6 @@ app.innerHTML = `
             <div class="benchmark-panel-header">
                 <div>
                     <h2>Benchmark</h2>
-
                     <span
                         id="benchmark-status"
                         class="benchmark-status"
@@ -135,7 +180,6 @@ app.innerHTML = `
                         Live
                     </span>
                 </div>
-
                 <button
                     id="benchmark-record"
                     class="benchmark-record-button"
@@ -144,19 +188,15 @@ app.innerHTML = `
                     Record Snapshot
                 </button>
             </div>
-
             <section class="benchmark-section">
                 <h3>Current</h3>
-
                 <div
                     id="benchmark-current"
                     class="benchmark-grid"
                 ></div>
             </section>
-
             <section class="benchmark-section">
                 <h3>Snapshot</h3>
-
                 <div
                     id="benchmark-snapshot"
                     class="benchmark-snapshot"
@@ -167,7 +207,6 @@ app.innerHTML = `
                 </div>
             </section>
         </aside>
-
     </div>
 `;
 
@@ -195,6 +234,12 @@ const pixiWebgpuRendererHost = getRequiredElement<HTMLDivElement>('#pixi-webgpu-
 
 const rendererSelect = getRequiredElement<HTMLSelectElement>('#renderer-select');
 
+const rowsInput = getRequiredElement<HTMLInputElement>('#rows-input');
+
+const columnsInput = getRequiredElement<HTMLInputElement>('#columns-input');
+
+const vehiclesInput = getRequiredElement<HTMLInputElement>('#vehicles-input');
+
 const benchmarkRecord = getRequiredElement<HTMLButtonElement>('#benchmark-record');
 
 const benchmarkStatus = getRequiredElement<HTMLElement>('#benchmark-status');
@@ -221,13 +266,73 @@ for (const host of Object.values(rendererHosts)) {
     host.style.display = 'none';
 }
 
-domRendererHost.style.display = 'block';
+/* =============================================================
+   BENCHMARKING
+============================================================= */
+
+const benchmarkMonitor = new BenchmarkMonitor();
+
+let latestSnapshot: BenchmarkSnapshot | null = null;
+
+/* =============================================================
+   WEBGPU
+============================================================= */
+
+let webgpuAvailable = false;
+
+async function isWebGPUAvailable(): Promise<boolean> {
+    if (!('gpu' in navigator)) {
+        return false;
+    }
+
+    const gpu = (
+        navigator as Navigator & {
+            gpu?: {
+                requestAdapter: () => Promise<unknown>;
+            };
+        }
+    ).gpu;
+
+    if (!gpu) {
+        return false;
+    }
+
+    try {
+        const adapter = await gpu.requestAdapter();
+
+        return adapter !== null;
+    } catch {
+        return false;
+    }
+}
+
+function updateWebGPUOption(): void {
+    const option = rendererSelect.querySelector<HTMLOptionElement>('option[value="pixi-webgpu"]');
+
+    if (!option) {
+        return;
+    }
+
+    if (webgpuAvailable) {
+        option.disabled = false;
+
+        option.textContent = 'PixiJS WebGPU';
+    } else {
+        option.disabled = true;
+
+        option.textContent = 'PixiJS WebGPU (Unavailable)';
+    }
+}
 
 /* =============================================================
    SIMULATION
 ============================================================= */
 
-const simulation = new Simulation(simulationConfig);
+let simulation = new Simulation(createSimulationConfig());
+
+/* =============================================================
+   RENDERERS
+============================================================= */
 
 const rendererOptions: RendererOptions = {
     dom: {
@@ -279,91 +384,44 @@ const renderers: Record<RendererType, Renderer> = {
     'pixi-webgpu': createRenderer('pixi-webgpu', rendererOptions),
 };
 
-/* =============================================================
-   WEBGPU AVAILABILITY
-============================================================= */
-
-async function isWebGPUAvailable(): Promise<boolean> {
-    if (!('gpu' in navigator)) {
-        return false;
-    }
-
-    const gpu = (
-        navigator as Navigator & {
-            gpu?: {
-                requestAdapter: () => Promise<unknown>;
-            };
-        }
-    ).gpu;
-
-    if (!gpu) {
-        return false;
-    }
-
-    try {
-        const adapter = await gpu.requestAdapter();
-
-        return adapter !== null;
-    } catch {
-        return false;
-    }
-}
-
-/* =============================================================
-   INITIALIZE RENDERERS
-============================================================= */
-
-const webgpuAvailable = await isWebGPUAvailable();
-
-if (!webgpuAvailable) {
-    const option = rendererSelect.querySelector<HTMLOptionElement>('option[value="pixi-webgpu"]');
-
-    if (option) {
-        option.disabled = true;
-
-        option.textContent = 'PixiJS WebGPU (Unavailable)';
-    }
-}
-
-for (const rendererType of Object.keys(renderers) as RendererType[]) {
-    if (rendererType === 'pixi-webgpu' && !webgpuAvailable) {
-        continue;
-    }
-
-    try {
-        await renderers[rendererType].initialize();
-    } catch (error) {
-        console.warn(`Failed to initialize ${getRendererLabel(rendererType)}.`, error);
-
-        if (rendererType === 'pixi-webgpu') {
-            const option = rendererSelect.querySelector<HTMLOptionElement>(
-                'option[value="pixi-webgpu"]',
-            );
-
-            if (option) {
-                option.disabled = true;
-
-                option.textContent = 'PixiJS WebGPU (Unavailable)';
-            }
-        }
-    }
-}
-
-/* =============================================================
-   BENCHMARKING
-============================================================= */
-
-const benchmarkMonitor = new BenchmarkMonitor();
-
-let latestSnapshot: BenchmarkSnapshot | null = null;
-
-/* =============================================================
-   ACTIVE RENDERER
-============================================================= */
-
 let activeRendererType: RendererType = 'dom';
 
 let activeRenderer: Renderer = renderers.dom;
+
+/*
+ * Only the currently initialized renderer is guaranteed to
+ * have a live rendering context/DOM scene.
+ */
+const initializedRenderers = new Set<RendererType>();
+
+/*
+ * Prevent two asynchronous renderer operations from running
+ * simultaneously.
+ */
+let rendererOperationInProgress = false;
+
+/*
+ * Prevent simulation/render work while the scenario is being
+ * rebuilt.
+ */
+let restartInProgress = false;
+
+/* =============================================================
+   RENDERER HELPERS
+============================================================= */
+
+function getRendererLabel(type: RendererType): string {
+    switch (type) {
+        case 'dom':
+            return 'DOM';
+
+        case 'pixi-webgl':
+            return 'PixiJS WebGL';
+
+        case 'pixi-webgpu':
+            return 'PixiJS WebGPU';
+    }
+}
 
 function isRendererAvailable(type: RendererType): boolean {
     if (type === 'pixi-webgpu') {
@@ -373,9 +431,61 @@ function isRendererAvailable(type: RendererType): boolean {
     return true;
 }
 
-function setActiveRenderer(type: RendererType): void {
-    if (benchmarkMonitor.isRecording()) {
+function showRendererHost(type: RendererType): void {
+    for (const rendererType of Object.keys(rendererHosts) as RendererType[]) {
+        rendererHosts[rendererType].style.display = rendererType === type ? 'block' : 'none';
+    }
+}
+
+async function initializeRenderer(type: RendererType): Promise<boolean> {
+    if (initializedRenderers.has(type)) {
+        return true;
+    }
+
+    if (!isRendererAvailable(type)) {
+        return false;
+    }
+
+    try {
+        await renderers[type].initialize();
+
+        initializedRenderers.add(type);
+
+        return true;
+    } catch (error) {
+        console.error(`Failed to initialize ${getRendererLabel(type)}.`, error);
+
+        if (type === 'pixi-webgpu') {
+            webgpuAvailable = false;
+
+            updateWebGPUOption();
+        }
+
+        return false;
+    }
+}
+
+function renderCurrentState(): void {
+    activeRenderer.render(createRenderState(simulation));
+}
+
+/* =============================================================
+   RENDERER SWITCHING
+============================================================= */
+
+async function switchRenderer(type: RendererType): Promise<void> {
+    if (restartInProgress || rendererOperationInProgress || benchmarkMonitor.isRecording()) {
         rendererSelect.value = activeRendererType;
+
+        return;
+    }
+
+    if (type === activeRendererType) {
+        showRendererHost(activeRendererType);
+
+        if (initializedRenderers.has(activeRendererType)) {
+            renderCurrentState();
+        }
 
         return;
     }
@@ -386,27 +496,282 @@ function setActiveRenderer(type: RendererType): void {
         return;
     }
 
-    activeRendererType = type;
+    rendererOperationInProgress = true;
 
-    activeRenderer = renderers[type];
+    rendererSelect.disabled = true;
 
-    for (const rendererType of Object.keys(rendererHosts) as RendererType[]) {
-        const host = rendererHosts[rendererType];
+    try {
+        const initialized = await initializeRenderer(type);
 
-        host.style.display = rendererType === activeRendererType ? 'block' : 'none';
+        if (!initialized) {
+            rendererSelect.value = activeRendererType;
+
+            return;
+        }
+
+        // Only switch once the new renderer is ready.
+        activeRendererType = type;
+
+        activeRenderer = renderers[type];
+
+        rendererSelect.value = activeRendererType;
+
+        showRendererHost(activeRendererType);
+
+        renderCurrentState();
+    } finally {
+        rendererOperationInProgress = false;
+
+        rendererSelect.disabled = benchmarkMonitor.isRecording();
     }
-
-    activeRenderer.render(createRenderState(simulation));
 }
 
 rendererSelect.addEventListener('change', () => {
-    setActiveRenderer(rendererSelect.value as RendererType);
+    void switchRenderer(rendererSelect.value as RendererType);
 });
 
-setActiveRenderer('dom');
+/* =============================================================
+   SCENARIO INPUT
+============================================================= */
+
+function setScenarioControlsDisabled(disabled: boolean): void {
+    rowsInput.disabled = disabled;
+
+    columnsInput.disabled = disabled;
+
+    vehiclesInput.disabled = disabled;
+}
+
+function parseScenarioInteger(input: HTMLInputElement, label: string, minimum: number): number {
+    const value = Number.parseInt(input.value, 10);
+
+    if (!Number.isInteger(value) || value < minimum) {
+        throw new Error(`${label} must be an integer greater than or equal to ${minimum}.`);
+    }
+
+    return value;
+}
 
 /* =============================================================
-   BENCHMARK UI
+   SCENARIO RESTART
+============================================================= */
+
+async function restartSimulation(): Promise<void> {
+    if (restartInProgress || rendererOperationInProgress || benchmarkMonitor.isRecording()) {
+        return;
+    }
+
+    let nextRows: number;
+    let nextColumns: number;
+    let nextVehicleCount: number;
+
+    try {
+        nextRows = parseScenarioInteger(rowsInput, 'Rows', 2);
+
+        nextColumns = parseScenarioInteger(columnsInput, 'Columns', 2);
+
+        nextVehicleCount = parseScenarioInteger(vehiclesInput, 'Vehicles', 1);
+    } catch (error) {
+        console.error('Invalid scenario configuration.', error);
+
+        rowsInput.value = String(gridConfig.rows);
+
+        columnsInput.value = String(gridConfig.columns);
+
+        vehiclesInput.value = String(vehiclesConfig.count);
+
+        return;
+    }
+
+    /*
+     * Nothing changed.
+     */
+    if (
+        nextRows === gridConfig.rows &&
+        nextColumns === gridConfig.columns &&
+        nextVehicleCount === vehiclesConfig.count
+    ) {
+        return;
+    }
+
+    /*
+     * Pause simulation/render work.
+     */
+    restartInProgress = true;
+
+    setScenarioControlsDisabled(true);
+
+    rendererSelect.disabled = true;
+
+    const previousRows = gridConfig.rows;
+
+    const previousColumns = gridConfig.columns;
+
+    const previousVehicleCount = vehiclesConfig.count;
+
+    const previousRendererType = activeRendererType;
+
+    try {
+        /*
+         * Apply the new configuration.
+         */
+        gridConfig.rows = nextRows;
+
+        gridConfig.columns = nextColumns;
+
+        vehiclesConfig.count = nextVehicleCount;
+
+        /*
+         * Create the new simulation.
+         */
+        const nextSimulation = new Simulation(createSimulationConfig());
+
+        /*
+         * Keep the same renderer instance.
+         *
+         * We reset it:
+         *
+         *     destroy()
+         *     initialize()
+         *     render()
+         *
+         * This is safe for both DOM and Pixi because the same
+         * object owns the same host throughout its lifecycle.
+         */
+        const renderer = activeRenderer;
+
+        /*
+         * Tear down the current renderer.
+         */
+        renderer.destroy();
+
+        initializedRenderers.delete(activeRendererType);
+
+        /*
+         * Reinitialize the same renderer instance.
+         *
+         * DOM returns immediately.
+         * Pixi waits for Application.init().
+         */
+        const initialized = await initializeRenderer(activeRendererType);
+
+        if (!initialized) {
+            throw new Error(`Failed to reinitialize ${getRendererLabel(previousRendererType)}.`);
+        }
+
+        /*
+         * Only now commit the new Simulation.
+         */
+        simulation = nextSimulation;
+
+        activeRendererType = previousRendererType;
+
+        activeRenderer = renderer;
+
+        /*
+         * The renderer now belongs to the new scenario.
+         */
+        rendererSelect.value = activeRendererType;
+
+        showRendererHost(activeRendererType);
+
+        /*
+         * Render the initial state of the new scenario.
+         */
+        activeRenderer.render(createRenderState(simulation));
+
+        /*
+         * The previous benchmark snapshot no longer represents
+         * the current scenario.
+         */
+        latestSnapshot = null;
+
+        renderSnapshot(null);
+
+        benchmarkStatus.textContent = 'Live';
+
+        /*
+         * Restart the time base.
+         */
+        previousTime = performance.now();
+    } catch (error) {
+        /*
+         * Restore configuration.
+         */
+        gridConfig.rows = previousRows;
+
+        gridConfig.columns = previousColumns;
+
+        vehiclesConfig.count = previousVehicleCount;
+
+        rowsInput.value = String(previousRows);
+
+        columnsInput.value = String(previousColumns);
+
+        vehiclesInput.value = String(previousVehicleCount);
+
+        rendererSelect.value = activeRendererType;
+
+        console.error('Could not restart simulation.', error);
+
+        /*
+         * Try to restore the renderer that was active.
+         */
+        try {
+            const restored = await initializeRenderer(previousRendererType);
+
+            if (restored) {
+                activeRendererType = previousRendererType;
+
+                activeRenderer = renderers[previousRendererType];
+
+                showRendererHost(activeRendererType);
+
+                activeRenderer.render(createRenderState(simulation));
+            }
+        } catch (restoreError) {
+            console.error('Could not restore renderer after failed restart.', restoreError);
+        }
+    } finally {
+        /*
+         * Resume the frame loop.
+         */
+        restartInProgress = false;
+
+        rendererSelect.disabled = benchmarkMonitor.isRecording();
+
+        setScenarioControlsDisabled(benchmarkMonitor.isRecording());
+
+        rendererSelect.value = activeRendererType;
+
+        showRendererHost(activeRendererType);
+
+        previousTime = performance.now();
+    }
+}
+
+rowsInput.addEventListener('change', () => {
+    void restartSimulation();
+});
+
+columnsInput.addEventListener('change', () => {
+    void restartSimulation();
+});
+
+vehiclesInput.addEventListener('change', () => {
+    void restartSimulation();
+});
+
+for (const input of [rowsInput, columnsInput, vehiclesInput]) {
+    input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            input.blur();
+        }
+    });
+}
+
+/* =============================================================
+   BENCHMARK CURRENT UI
 ============================================================= */
 
 let benchmarkUiLastUpdated = 0;
@@ -449,16 +814,15 @@ function renderBenchmarkCurrent(now: number): void {
 function metric(label: string, value: string): string {
     return `
         <div class="benchmark-metric">
-            <span class="benchmark-metric-label">
-                ${label}
-            </span>
-
-            <strong class="benchmark-metric-value">
-                ${value}
-            </strong>
+            <span class="benchmark-metric-label">${label}</span>
+            <strong class="benchmark-metric-value">${value}</strong>
         </div>
     `;
 }
+
+/* =============================================================
+   BENCHMARK SNAPSHOT UI
+============================================================= */
 
 function renderSnapshot(snapshot: BenchmarkSnapshot | null): void {
     if (!snapshot) {
@@ -475,61 +839,32 @@ function renderSnapshot(snapshot: BenchmarkSnapshot | null): void {
 
     benchmarkSnapshot.innerHTML = `
         <div class="benchmark-snapshot-meta">
-            <span>
-                ${getRendererLabel(snapshot.renderer)}
-            </span>
-
-            <span>
-                ${(snapshot.durationMs / 1000).toFixed(1)}s
-            </span>
+            <span>${getRendererLabel(snapshot.renderer)}</span>
+            <span>${(snapshot.durationMs / 1000).toFixed(1)}s</span>
         </div>
-
         <div class="benchmark-grid">
-
             ${metric('Average FPS', snapshot.averageFps.toFixed(1))}
-
             ${metric('1% low FPS', snapshot.low1PercentFps.toFixed(1))}
-
             ${metric('Avg frame', `${snapshot.averageFrameTime.toFixed(2)} ms`)}
-
             ${metric('P95 frame', `${snapshot.p95FrameTime.toFixed(2)} ms`)}
-
             ${metric('Avg simulation', `${snapshot.averageSimulationTime.toFixed(2)} ms`)}
-
             ${metric('P95 simulation', `${snapshot.p95SimulationTime.toFixed(2)} ms`)}
-
             ${metric('Avg renderer', `${snapshot.averageRenderTime.toFixed(2)} ms`)}
-
             ${metric('P95 renderer', `${snapshot.p95RenderTime.toFixed(2)} ms`)}
-
             ${metric('Main thread', `${snapshot.averageMainThreadUtilization.toFixed(1)}%`)}
-
             ${metric('Peak main thread', `${snapshot.peakMainThreadUtilization.toFixed(1)}%`)}
-
             ${metric('Memory start', formatMemory(snapshot.memoryStartMb))}
-
             ${metric('Memory end', formatMemory(snapshot.memoryEndMb))}
-
             ${metric('Memory peak', formatMemory(snapshot.memoryPeakMb))}
-
             ${metric('Vehicles', String(snapshot.vehicleCount))}
-
             ${metric('Map', `${snapshot.rows} × ${snapshot.columns}`)}
-
             ${metric('CPU cores', String(environment.logicalProcessors))}
-
-            ${metric(
-                'Device memory',
-                environment.deviceMemoryGb === null ? 'N/A' : `${environment.deviceMemoryGb} GB`,
-            )}
-
+            ${metric('Device memory', environment.deviceMemoryGb === null ? 'N/A' : `${environment.deviceMemoryGb} GB`)}
         </div>
-
         <button
             id="benchmark-copy"
             class="benchmark-copy-button"
-            type="button"
-        >
+            type="button">
             Copy Snapshot
         </button>
     `;
@@ -547,19 +882,6 @@ function renderSnapshot(snapshot: BenchmarkSnapshot | null): void {
 
 function formatMemory(value: number | null): string {
     return value === null ? 'N/A' : `${value.toFixed(1)} MB`;
-}
-
-function getRendererLabel(type: RendererType): string {
-    switch (type) {
-        case 'dom':
-            return 'DOM';
-
-        case 'pixi-webgl':
-            return 'PixiJS WebGL';
-
-        case 'pixi-webgpu':
-            return 'PixiJS WebGPU';
-    }
 }
 
 /* =============================================================
@@ -581,6 +903,8 @@ benchmarkRecord.addEventListener('click', () => {
 
         rendererSelect.disabled = false;
 
+        setScenarioControlsDisabled(false);
+
         renderSnapshot(latestSnapshot);
 
         renderBenchmarkCurrent(performance.now());
@@ -595,6 +919,8 @@ benchmarkRecord.addEventListener('click', () => {
     benchmarkRecord.textContent = 'Stop Recording';
 
     rendererSelect.disabled = true;
+
+    setScenarioControlsDisabled(true);
 });
 
 /* =============================================================
@@ -604,45 +930,93 @@ benchmarkRecord.addEventListener('click', () => {
 let previousTime = performance.now();
 
 function frame(currentTime: number): void {
-    const frameStart = performance.now();
+    /*
+     * The browser continues scheduling requestAnimationFrame
+     * even while restartSimulation() is awaiting Pixi initialization.
+     *
+     * Do not touch the simulation or renderer during that time.
+     */
+    if (restartInProgress || rendererOperationInProgress) {
+        previousTime = currentTime;
 
-    const deltaTime = Math.min(currentTime - previousTime, 100);
+        requestAnimationFrame(frame);
 
-    previousTime = currentTime;
+        return;
+    }
 
-    const simulationStart = performance.now();
+    try {
+        const frameStart = performance.now();
 
-    simulation.update(deltaTime);
+        const deltaTime = Math.min(currentTime - previousTime, 100);
 
-    const simulationTime = performance.now() - simulationStart;
+        previousTime = currentTime;
 
-    const renderState = createRenderState(simulation);
+        const simulationStart = performance.now();
 
-    const renderStart = performance.now();
+        simulation.update(deltaTime);
 
-    activeRenderer.render(renderState);
+        const simulationTime = performance.now() - simulationStart;
 
-    const renderTime = performance.now() - renderStart;
+        const renderState = createRenderState(simulation);
 
-    const frameTime = performance.now() - frameStart;
+        const renderStart = performance.now();
 
-    benchmarkMonitor.recordFrame(
-        currentTime,
-        frameTime,
-        simulationTime,
-        renderTime,
-        simulation.getVehicles().length,
-    );
+        activeRenderer.render(renderState);
 
-    renderBenchmarkCurrent(currentTime);
+        const renderTime = performance.now() - renderStart;
+
+        const frameTime = performance.now() - frameStart;
+
+        benchmarkMonitor.recordFrame(
+            currentTime,
+            frameTime,
+            simulationTime,
+            renderTime,
+            simulation.getVehicles().length,
+        );
+
+        renderBenchmarkCurrent(currentTime);
+    } catch (error) {
+        /*
+         * Keep requestAnimationFrame alive if a frame throws.
+         */
+        console.error('Simulation frame failed.', error);
+    }
 
     requestAnimationFrame(frame);
 }
 
 /* =============================================================
-   INITIAL STATE
+   INITIALIZATION
 ============================================================= */
 
+webgpuAvailable = await isWebGPUAvailable();
+
+updateWebGPUOption();
+
+/*
+ * Start with DOM only.
+ *
+ * Pixi is initialized only if/when selected.
+ */
+const domInitialized = await initializeRenderer('dom');
+
+if (!domInitialized) {
+    throw new Error('Failed to initialize the DOM renderer.');
+}
+
+activeRendererType = 'dom';
+
+activeRenderer = renderers.dom;
+
+rendererSelect.value = 'dom';
+
+showRendererHost('dom');
+
+renderCurrentState();
+
 renderSnapshot(latestSnapshot);
+
+previousTime = performance.now();
 
 requestAnimationFrame(frame);
