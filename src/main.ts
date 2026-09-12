@@ -61,13 +61,11 @@ const vehiclesConfig: VehicleConfig = {
     stoppingDistance: 35,
 };
 
-/*
- * One seed for the lifetime of the application.
- *
- * Every scenario reset uses the same seed so renderer
- * comparisons use the same scenario configuration.
- */
-const scenarioSeed = Math.random();
+function generateRandomSeed(): number {
+    return Math.floor(Math.random() * 0x100000000) >>> 0;
+}
+
+let currentSimulationSeed = generateRandomSeed();
 
 function createSimulationConfig(): SimulationConfig {
     return {
@@ -83,7 +81,7 @@ function createSimulationConfig(): SimulationConfig {
             ...vehiclesConfig,
         },
 
-        seed: scenarioSeed,
+        seed: currentSimulationSeed,
     };
 }
 
@@ -92,6 +90,7 @@ function createSimulationConfig(): SimulationConfig {
 ============================================================= */
 
 let customBenchmarkSuiteConfig: BenchmarkSuiteConfig = {
+    seed: generateRandomSeed(),
     warmupMs: 3000,
     durationMs: 10000,
     renderers: ['dom', 'pixi-webgl', 'pixi-webgpu'],
@@ -1415,7 +1414,9 @@ for (const backdrop of document.querySelectorAll<HTMLElement>('[data-close-modal
 ============================================================= */
 
 const benchmarkSuiteRunner = new BenchmarkSuiteRunner(benchmarkMonitor, {
-    prepareRun: async (setup, renderer) => {
+    prepareRun: async (setup, renderer, seed) => {
+        currentSimulationSeed = seed;
+
         await rebuildSimulation(setup.rows, setup.columns, setup.vehicleCount, {
             force: true,
             updateInputs: true,
@@ -1454,12 +1455,10 @@ async function startBenchmarkSuite(config: BenchmarkSuiteConfig): Promise<void> 
     }
 
     const originalRows = gridConfig.rows;
-
     const originalColumns = gridConfig.columns;
-
     const originalVehicleCount = vehiclesConfig.count;
-
     const originalRendererType = activeRendererType;
+    const originalSeed = currentSimulationSeed;
 
     benchmarkSuiteRunning = true;
 
@@ -1474,7 +1473,7 @@ async function startBenchmarkSuite(config: BenchmarkSuiteConfig): Promise<void> 
     const totalRuns = getBenchmarkSuiteTotalRuns(config);
 
     try {
-        benchmarkStatus.textContent = `Suite starting • 0/${totalRuns}`;
+        benchmarkStatus.textContent = `Suite starting • 1/${totalRuns}`;
 
         benchmarkSuiteResults = await benchmarkSuiteRunner.run(config, {
             onProgress: ({
@@ -1492,7 +1491,9 @@ async function startBenchmarkSuite(config: BenchmarkSuiteConfig): Promise<void> 
                     phaseLabel = 'Warming up';
                 }
 
-                benchmarkStatus.textContent = `${phaseLabel} • ${setup.name} • ${getRendererLabel(renderer)} • ${completedRuns + 1}/${progressTotalRuns}`;
+                const currentRun = Math.min(completedRuns + 1, progressTotalRuns);
+
+                benchmarkStatus.textContent = `${phaseLabel} • ${setup.name} • ${getRendererLabel(renderer)} • ${currentRun}/${progressTotalRuns}`;
             },
         });
     } catch (error) {
@@ -1501,6 +1502,8 @@ async function startBenchmarkSuite(config: BenchmarkSuiteConfig): Promise<void> 
         benchmarkStatus.textContent = 'Restoring scenario…';
 
         try {
+            currentSimulationSeed = originalSeed;
+
             await rebuildSimulation(originalRows, originalColumns, originalVehicleCount, {
                 force: true,
                 updateInputs: true,
@@ -1562,6 +1565,8 @@ benchmarkConfigRun.addEventListener('click', () => {
 
         return;
     }
+
+    config.seed = generateRandomSeed();
 
     customBenchmarkSuiteConfig = config;
 

@@ -13,9 +13,11 @@ import { VehicleDetector } from '@core/vehicles/vehicle-detector';
 import { VehicleSpawner } from '@core/vehicles/vehicle-spawner';
 import type { VehicleState } from '@core/vehicles/vehicle-state';
 import type { SimulationConfig } from '@shared/config/simulation-config';
+import { SeededRandom } from '@shared/utils/math/seeded-random';
 
 export class Simulation {
     private readonly config: SimulationConfig;
+    private readonly random: SeededRandom;
     private readonly roadMap: RoadMap;
     private readonly movements: Map<RoadNode['id'], readonly Movement[]>;
     private readonly trafficLightSystem: TrafficLightSystem;
@@ -27,12 +29,17 @@ export class Simulation {
 
     constructor(config: SimulationConfig) {
         this.config = config;
+        this.random = new SeededRandom(config.seed);
+
         this.roadMap = this.createRoadMap();
         this.movements = this.createMovements(this.roadMap);
         this.trafficLightSystem = this.createTrafficLightSystem(this.roadMap);
         this.pathfinder = new Pathfinder(this.getMovementsArray());
-        this.destinationGenerator = new DestinationGenerator(this.roadMap.getLanes());
+
+        this.destinationGenerator = new DestinationGenerator(this.roadMap.getLanes(), this.random);
+
         this.vehicleDetector = new VehicleDetector();
+
         this.vehicleSpawner = new VehicleSpawner(
             this.roadMap.getLanes(),
             this.pathfinder,
@@ -40,7 +47,9 @@ export class Simulation {
             this.config.vehicles,
             this.trafficLightSystem,
             this.vehicleDetector,
+            this.random,
         );
+
         this.spawnVehicles(this.config.vehicles.count);
 
         /*
@@ -57,8 +66,10 @@ export class Simulation {
         if (deltaTime <= 0) {
             return;
         }
+
         this.trafficLightSystem.update(deltaTime);
         this.vehicleDetector.rebuild();
+
         for (const vehicle of this.vehicles) {
             vehicle.update(deltaTime);
         }
@@ -131,7 +142,7 @@ export class Simulation {
                 this.config.trafficLightsPhase.yellowDuration +
                 this.config.trafficLightsPhase.allRedDuration;
 
-            const initialTime = Math.floor(Math.random() * totalLightsDurationCycle);
+            const initialTime = this.random.nextInt(0, totalLightsDurationCycle - 1);
 
             const controller = new TrafficLightController(phases, initialTime);
 

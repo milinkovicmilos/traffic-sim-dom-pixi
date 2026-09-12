@@ -1,5 +1,4 @@
 import type { RendererType } from '@rendering/renderer-factory';
-
 import type { BenchmarkSnapshot, BenchmarkMonitor } from './benchmark-monitor';
 
 export interface BenchmarkSuiteSetup {
@@ -29,8 +28,11 @@ export interface BenchmarkSuiteProgress {
 }
 
 export interface BenchmarkSuiteRunnerCallbacks {
-    prepareRun: (setup: BenchmarkSuiteSetup, renderer: RendererType) => Promise<boolean>;
-
+    prepareRun: (
+        setup: BenchmarkSuiteSetup,
+        renderer: RendererType,
+        seed: number,
+    ) => Promise<boolean>;
     getVehicleCount: () => number;
 }
 
@@ -40,14 +42,11 @@ export interface BenchmarkSuiteRunOptions {
 
 export class BenchmarkSuiteRunner {
     private readonly monitor: BenchmarkMonitor;
-
     private readonly callbacks: BenchmarkSuiteRunnerCallbacks;
-
     private running = false;
 
     constructor(monitor: BenchmarkMonitor, callbacks: BenchmarkSuiteRunnerCallbacks) {
         this.monitor = monitor;
-
         this.callbacks = callbacks;
     }
 
@@ -87,7 +86,7 @@ export class BenchmarkSuiteRunner {
                     let prepared = false;
 
                     try {
-                        prepared = await this.callbacks.prepareRun(setup, renderer);
+                        prepared = await this.callbacks.prepareRun(setup, renderer, config.seed);
                     } catch (error) {
                         results.push({
                             setup,
@@ -136,19 +135,25 @@ export class BenchmarkSuiteRunner {
                         phase: 'recording',
                     });
 
-                    let snapshot: BenchmarkSnapshot | null = null;
-
                     try {
                         this.monitor.startRecording(renderer);
 
                         await wait(config.durationMs);
 
-                        snapshot = this.monitor.stopRecording(
+                        const snapshot = this.monitor.stopRecording(
                             renderer,
                             this.callbacks.getVehicleCount(),
                             setup.rows,
                             setup.columns,
                         );
+
+                        results.push({
+                            setup,
+                            renderer,
+                            status: 'complete',
+                            snapshot,
+                            reason: null,
+                        });
                     } catch (error) {
                         if (this.monitor.isRecording()) {
                             try {
@@ -159,7 +164,7 @@ export class BenchmarkSuiteRunner {
                                     setup.columns,
                                 );
                             } catch {
-                                // Ignore cleanup failure.
+                                // Ignore cleanup errors.
                             }
                         }
 
@@ -176,14 +181,6 @@ export class BenchmarkSuiteRunner {
                         continue;
                     }
 
-                    results.push({
-                        setup,
-                        renderer,
-                        status: 'complete',
-                        snapshot,
-                        reason: null,
-                    });
-
                     completedRuns += 1;
                 }
             }
@@ -195,6 +192,10 @@ export class BenchmarkSuiteRunner {
     }
 
     private validateConfig(config: BenchmarkSuiteConfig): void {
+        if (!Number.isInteger(config.seed) || config.seed < 0) {
+            throw new Error('Benchmark suite seed must be a non-negative integer.');
+        }
+
         if (!Number.isInteger(config.warmupMs) || config.warmupMs < 0) {
             throw new Error('Benchmark warmup duration must be a non-negative integer.');
         }
@@ -234,9 +235,5 @@ function wait(durationMs: number): Promise<void> {
 }
 
 function getErrorMessage(error: unknown): string {
-    if (error instanceof Error) {
-        return error.message;
-    }
-
-    return String(error);
+    return error instanceof Error ? error.message : String(error);
 }

@@ -4,7 +4,10 @@ import type { BenchmarkSuiteSetup } from './benchmark-suite';
 const FIXED_MAP_SIZE = 25;
 const FIXED_VEHICLE_COUNT = 1000;
 
+const STANDARD_BENCHMARK_SEED = 123456789;
+
 export interface BenchmarkSuiteConfig {
+    seed: number;
     warmupMs: number;
     durationMs: number;
     renderers: RendererType[];
@@ -12,6 +15,7 @@ export interface BenchmarkSuiteConfig {
 }
 
 export const standardBenchmarkSuite: BenchmarkSuiteConfig = {
+    seed: STANDARD_BENCHMARK_SEED,
     warmupMs: 3000,
     durationMs: 10000,
     renderers: ['dom', 'pixi-webgl'],
