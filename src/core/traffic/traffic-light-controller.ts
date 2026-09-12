@@ -18,7 +18,7 @@ export class TrafficLightController {
             }
         }
 
-        this.phases = phases;
+        this.phases = [...phases];
 
         this.setInitialTime(initialTime);
     }
@@ -60,8 +60,7 @@ export class TrafficLightController {
     /**
      * Returns whether the requested movement is currently allowed.
      *
-     * This is the single movement-level permission check used by
-     * the simulation.
+     * The phase performs the logical movement comparison.
      */
     allowsMovement(movement: Movement): boolean {
         return this.getCurrentPhase().allowsMovement(movement);
@@ -70,6 +69,7 @@ export class TrafficLightController {
     private setInitialTime(initialTime: number): void {
         if (initialTime <= 0) {
             this.elapsedTime = 0;
+
             return;
         }
 
@@ -80,6 +80,7 @@ export class TrafficLightController {
 
             if (remainingTime < phaseDuration) {
                 this.elapsedTime = remainingTime;
+
                 return;
             }
 

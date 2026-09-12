@@ -4,6 +4,7 @@ import type { Vehicle } from './vehicle';
 
 export interface VehicleAhead {
     vehicle: Vehicle;
+
     /**
      * Bumper-to-bumper distance along the current vehicle's path.
      */
@@ -16,16 +17,14 @@ export class VehicleDetector {
     /*
      * Vehicles are indexed by the lane they currently occupy.
      *
-     * This turns collision detection from an N² scan into a lookup
-     * over only the relevant lane buckets.
+     * The index is rebuilt once per simulation step from the
+     * beginning-of-step vehicle state.
      */
     private readonly vehiclesByLane = new Map<Lane, Vehicle[]>();
 
     /*
-     * Reused scratch set.
-     *
-     * It prevents the same candidate vehicle from being checked
-     * multiple times when a path contains the same lane only once.
+     * Reused scratch set to avoid checking the same vehicle more
+     * than once when it is relevant through multiple lanes.
      */
     private readonly checkedVehicles = new Set<Vehicle>();
 
@@ -34,9 +33,9 @@ export class VehicleDetector {
     }
 
     /**
-     * Rebuilds the spatial/path index.
+     * Rebuilds the lane index.
      *
-     * This should be called once per simulation step, BEFORE
+     * This should be called once per simulation step BEFORE
      * vehicles are updated.
      */
     rebuild(): void {
@@ -71,8 +70,16 @@ export class VehicleDetector {
         let closest: VehicleAhead | null = null;
 
         /*
-         * Only inspect lanes that can actually occur after the
-         * current position on this vehicle's path.
+         * Only consider vehicles on:
+         *
+         * 1. the lane the vehicle currently occupies
+         * 2. the immediately following lane on its path
+         *
+         * We deliberately do NOT search every future lane in the path.
+         *
+         * Searching the entire route can cause vehicles near an
+         * intersection to wait for vehicles much farther down the
+         * route, which can create artificial gridlock.
          */
         const relevantLanes = this.getRelevantLanes(vehiclePath, vehicleDistance);
 
@@ -88,11 +95,6 @@ export class VehicleDetector {
                     continue;
                 }
 
-                /*
-                 * The same vehicle can appear in multiple buckets
-                 * if the indexing strategy changes later. Keep this
-                 * guard so we never evaluate it twice.
-                 */
                 if (this.checkedVehicles.has(other)) {
                     continue;
                 }
@@ -105,6 +107,9 @@ export class VehicleDetector {
                     continue;
                 }
 
+                /*
+                 * We only care about the closest vehicle ahead.
+                 */
                 if (closest === null || gap < closest.gap) {
                     closest = {
                         vehicle: other,
@@ -118,7 +123,7 @@ export class VehicleDetector {
     }
 
     /**
-     * Returns lanes from the current lane through the end of the path.
+     * Returns only the current lane and the immediate next lane.
      *
      * The current lane always comes first.
      */
@@ -136,10 +141,20 @@ export class VehicleDetector {
         const currentIndex = lanes.indexOf(currentLane);
 
         if (currentIndex === -1) {
-            return lanes;
+            return [];
         }
 
-        return lanes.slice(currentIndex);
+        /*
+         * Include the current lane and at most one lane after it.
+         *
+         * This is enough to prevent vehicles from driving into
+         * another vehicle immediately ahead while avoiding
+         * long-range path-based dependencies that can deadlock
+         * multiple intersections.
+         */
+        const endIndex = Math.min(lanes.length, currentIndex + 2);
+
+        return lanes.slice(currentIndex, endIndex);
     }
 
     /**
@@ -158,8 +173,20 @@ export class VehicleDetector {
 
         const otherLocation = otherPath.getPathLocationAtDistance(otherDistance);
 
+        const otherLane = otherLocation.getLane();
+
+        /*
+         * Ignore vehicles that are not actually on one of the
+         * lanes relevant to this vehicle's immediate route.
+         */
+        const relevantLanes = this.getRelevantLanes(vehiclePath, vehicleDistance);
+
+        if (!relevantLanes.includes(otherLane)) {
+            return null;
+        }
+
         const otherPathDistance = vehiclePath.getPathDistanceAtLaneDistance(
-            otherLocation.getLane(),
+            otherLane,
             otherLocation.getDistance(),
         );
 
@@ -169,6 +196,11 @@ export class VehicleDetector {
 
         const centerDistance = otherPathDistance - vehicleDistance;
 
+        /*
+         * Convert center-to-center distance into a bumper-to-
+         * bumper distance by subtracting the vehicle ahead's
+         * physical length.
+         */
         return centerDistance - other.getLength();
     }
 }
