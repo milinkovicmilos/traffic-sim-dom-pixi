@@ -1,14 +1,17 @@
 import type { Lane } from '@core/map/lane';
 import { PathLocation } from '@core/pathfinding/pathlocation';
 import { MathUtils } from '@shared/utils/math/math-utils';
+import type { SeededRandom } from '@shared/utils/math/seeded-random';
 
 export class DestinationGenerator {
     private static readonly MAX_ATTEMPTS = 100;
 
     private readonly lanes: readonly Lane[];
+    private readonly random: SeededRandom;
 
-    constructor(lanes: readonly Lane[]) {
+    constructor(lanes: readonly Lane[], random: SeededRandom) {
         this.lanes = lanes;
+        this.random = random;
     }
 
     generate(start?: PathLocation): PathLocation {
@@ -29,13 +32,13 @@ export class DestinationGenerator {
     }
 
     private getRandomLane(): Lane {
-        const index = Math.floor(Math.random() * this.lanes.length);
+        const index = this.random.nextInt(0, this.lanes.length - 1);
 
         return this.lanes[index];
     }
 
     private getRandomDistance(lane: Lane): number {
-        return Math.random() * lane.getLength();
+        return this.random.next() * lane.getLength();
     }
 
     private isSameLocation(start: PathLocation, lane: Lane, distance: number): boolean {

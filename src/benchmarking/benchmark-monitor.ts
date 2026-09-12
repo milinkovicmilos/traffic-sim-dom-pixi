@@ -127,6 +127,34 @@ export class BenchmarkMonitor {
         };
     }
 
+    resetLiveMetrics(renderer: RendererType, vehicleCount: number): void {
+        this.liveFrameTimes.length = 0;
+
+        this.currentMemoryMb = this.readMemoryMb();
+
+        this.lastMemorySampleTime = performance.now();
+
+        this.currentMetrics = {
+            renderer,
+
+            fps: 0,
+
+            frameTimeMs: 0,
+
+            simulationTimeMs: 0,
+
+            renderTimeMs: 0,
+
+            mainThreadUtilization: 0,
+
+            memoryMb: this.currentMemoryMb,
+
+            vehicleCount,
+
+            frameCount: 0,
+        };
+    }
+
     getEnvironment(): BenchmarkEnvironment {
         const navigatorWithMemory = navigator as NavigatorWithDeviceMemory;
 

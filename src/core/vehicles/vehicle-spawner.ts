@@ -6,6 +6,7 @@ import { PathLocation } from '@core/pathfinding/pathlocation';
 import type { VehicleConfig } from '@shared/config/vehicle-config';
 import type { TrafficLightSystem } from '@core/traffic/traffic-light-system';
 import type { VehicleDetector } from './vehicle-detector';
+import type { SeededRandom } from '@shared/utils/math/seeded-random';
 
 export class VehicleSpawner {
     private readonly lanes: readonly Lane[];
@@ -14,6 +15,7 @@ export class VehicleSpawner {
     private readonly vehicleConfig: VehicleConfig;
     private readonly trafficLightSystem: TrafficLightSystem;
     private readonly vehicleDetector: VehicleDetector;
+    private readonly random: SeededRandom;
 
     constructor(
         lanes: readonly Lane[],
@@ -22,6 +24,7 @@ export class VehicleSpawner {
         vehicleConfig: VehicleConfig,
         trafficLightSystem: TrafficLightSystem,
         vehicleDetector: VehicleDetector,
+        random: SeededRandom,
     ) {
         this.lanes = lanes;
         this.pathfinder = pathfinder;
@@ -29,6 +32,7 @@ export class VehicleSpawner {
         this.vehicleConfig = vehicleConfig;
         this.trafficLightSystem = trafficLightSystem;
         this.vehicleDetector = vehicleDetector;
+        this.random = random;
     }
 
     spawn(): Vehicle {
@@ -57,9 +61,9 @@ export class VehicleSpawner {
             throw new Error('Cannot spawn a vehicle without lanes.');
         }
 
-        const lane = this.lanes[Math.floor(Math.random() * this.lanes.length)];
+        const lane = this.random.pick(this.lanes);
 
-        const distance = Math.random() * lane.getLength();
+        const distance = this.random.next() * lane.getLength();
 
         return new PathLocation(lane, distance);
     }
