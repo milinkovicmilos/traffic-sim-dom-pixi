@@ -27,7 +27,7 @@ export class Vehicle {
     /*
      * Maximum visual rotation speed in radians per second.
      */
-    private readonly steeringSpeed = 8;
+    private readonly steeringSpeed = 4.5;
 
     /*
      * Small forward sample used to determine the local
@@ -533,18 +533,6 @@ export class Vehicle {
         this.currentSpeed = 0;
 
         this.stoppedForMovement = nextMovement;
-    }
-
-    private getBrakingDistance(speed: number): number {
-        if (speed <= MathUtils.epsilon) {
-            return 0;
-        }
-
-        if (this.braking <= MathUtils.epsilon) {
-            return Number.POSITIVE_INFINITY;
-        }
-
-        return (speed * speed) / (2 * this.braking);
     }
 
     private moveTowardsSpeed(
