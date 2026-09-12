@@ -1,43 +1,65 @@
 import type { Path } from '@core/pathfinding/path';
 import type { Pathfinder } from '@core/pathfinding/pathfinder';
 import { PathLocation } from '@core/pathfinding/pathlocation';
+import type { Movement } from '@core/traffic/movement';
+import type { TrafficLightSystem } from '@core/traffic/traffic-light-system';
+
 import { Vector2 } from '@shared/utils/math/vector2';
-import type { VehicleState } from './vehicle-state';
 import { MathUtils } from '@shared/utils/math/math-utils';
 import { Angle } from '@shared/utils/math/angle';
+
+import type { VehicleState } from './vehicle-state';
 import type { VehicleConfig } from '@shared/config/vehicle-config';
-import type { TrafficLightSystem } from '@core/traffic/traffic-light-system';
 import type { VehicleDetector } from './vehicle-detector';
 import type { DestinationGenerator } from './destination-generator';
 
 export class Vehicle {
     private path: Path;
-    private readonly pathfinder: Pathfinder;
-    private readonly destinationGenerator: DestinationGenerator;
+
+    private readonly acceleration: number;
+    private readonly braking: number;
     private readonly maxSpeed: number;
     private readonly stoppingDistance: number;
     private readonly followingDistance: number;
+    private readonly minimumGap: number;
+    private readonly length: number;
+
     private readonly trafficLightSystem: TrafficLightSystem;
     private readonly vehicleDetector: VehicleDetector;
+    private readonly pathfinder: Pathfinder;
+    private readonly destinationGenerator: DestinationGenerator;
+
     private currentSpeed = 0;
     private travelledDistance = 0;
 
+    /**
+     * The exact movement that caused this vehicle to stop.
+     *
+     * The vehicle remains stopped until this same movement
+     * becomes allowed.
+     */
+    private stoppedForMovement: Movement | null = null;
+
     constructor(
         path: Path,
-        pathfinder: Pathfinder,
-        destinationGenerator: DestinationGenerator,
         config: VehicleConfig,
         trafficLightSystem: TrafficLightSystem,
         vehicleDetector: VehicleDetector,
+        pathfinder: Pathfinder,
+        destinationGenerator: DestinationGenerator,
     ) {
         this.path = path;
-        this.pathfinder = pathfinder;
-        this.destinationGenerator = destinationGenerator;
+        this.acceleration = config.acceleration;
+        this.braking = config.braking;
         this.maxSpeed = config.maxSpeed;
         this.stoppingDistance = config.stoppingDistance;
         this.followingDistance = config.followDistance;
+        this.minimumGap = config.minimumGap;
+        this.length = config.length;
         this.trafficLightSystem = trafficLightSystem;
         this.vehicleDetector = vehicleDetector;
+        this.pathfinder = pathfinder;
+        this.destinationGenerator = destinationGenerator;
     }
 
     getState(): VehicleState {
@@ -59,197 +81,155 @@ export class Vehicle {
         return this.maxSpeed;
     }
 
+    getLength(): number {
+        return this.length;
+    }
+
     getTravelledDistance(): number {
         return this.travelledDistance;
     }
 
-    /**
-     * Updates the vehicle.
-     *
-     * When the vehicle reaches the end of its current path,
-     * it immediately generates a new destination and path.
-     */
     update(deltaTime: number): void {
         if (deltaTime <= 0) {
             return;
         }
 
-        let remainingTime = deltaTime;
+        const remainingTime = deltaTime / 1000;
 
-        /*
-         * A single large update can potentially take the vehicle
-         * to its destination and leave some time remaining.
-         *
-         * Therefore we process the update in a loop so the vehicle
-         * can continue on its newly generated path during the same
-         * simulation step.
-         */
-        while (remainingTime > 0) {
-            this.currentSpeed = this.getTargetSpeed();
-
-            const distanceToTravel = (this.currentSpeed * remainingTime) / 1000;
-
-            const totalPathLength = this.path.getTotalLength();
-
-            const remainingDistance = totalPathLength - this.travelledDistance;
-
+        while (remainingTime > MathUtils.epsilon) {
             /*
-             * The vehicle has already reached the end of its path.
+             * A vehicle stopped by a red light cannot move
+             * until that exact movement becomes allowed.
              */
-            if (remainingDistance <= MathUtils.epsilon) {
-                const consumedTime = this.changeDestination();
-
-                if (!consumedTime) {
-                    /*
-                     * We could not create another route.
-                     *
-                     * Avoid an infinite loop and leave the
-                     * vehicle at the end of its current path.
-                     */
+            if (this.stoppedForMovement !== null) {
+                if (!this.trafficLightSystem.allowsMovement(this.stoppedForMovement)) {
                     this.currentSpeed = 0;
-
                     return;
                 }
 
-                continue;
+                this.stoppedForMovement = null;
+            }
+
+            const targetSpeed = this.getTargetSpeed();
+
+            const previousSpeed = this.currentSpeed;
+
+            this.currentSpeed = this.moveTowardsSpeed(previousSpeed, targetSpeed, remainingTime);
+
+            const redLightStopDistance = this.getRedLightStopDistance();
+
+            const vehicleAhead = this.vehicleDetector.findVehicleAhead(this);
+
+            const availableDistance = Math.max(
+                0,
+                this.path.getTotalLength() - this.travelledDistance,
+            );
+
+            const averageSpeed = (previousSpeed + this.currentSpeed) / 2;
+
+            let distanceToTravel = averageSpeed * remainingTime;
+
+            /*
+             * Red-light safety clamp.
+             */
+            if (redLightStopDistance !== null) {
+                distanceToTravel = Math.min(distanceToTravel, Math.max(0, redLightStopDistance));
             }
 
             /*
-             * Vehicle is currently stopped.
+             * Vehicle-following safety clamp.
              *
-             * No amount of remaining simulation time can advance
-             * the vehicle, so we are finished with this update.
+             * Never allow the vehicle to travel farther than
+             * the amount of road available before the desired
+             * following distance.
+             *
+             * This is the final collision-prevention guard for
+             * each simulation step.
              */
-            if (distanceToTravel <= 0) {
+            if (vehicleAhead !== null) {
+                /*
+                 * The hard safety limit is independent from the
+                 * preferred following distance.
+                 */
+                const safeFollowDistance = Math.max(this.minimumGap, 0);
+
+                distanceToTravel = Math.min(
+                    distanceToTravel,
+                    Math.max(0, vehicleAhead.gap - safeFollowDistance),
+                );
+            }
+
+            distanceToTravel = Math.min(distanceToTravel, availableDistance);
+
+            /*
+             * No movement is possible during this step.
+             */
+            if (distanceToTravel <= MathUtils.epsilon) {
+                this.currentSpeed = 0;
+
+                this.tryStopAtRedLight();
+
                 return;
             }
 
+            this.travelledDistance += distanceToTravel;
+
             /*
-             * The vehicle can complete its current path during
-             * this update.
+             * Check whether the red-light stopping point
+             * has just been reached.
              */
-            if (distanceToTravel >= remainingDistance) {
-                this.travelledDistance = totalPathLength;
+            if (
+                redLightStopDistance !== null &&
+                redLightStopDistance - distanceToTravel <= MathUtils.epsilon
+            ) {
+                this.tryStopAtRedLight();
 
-                /*
-                 * Estimate how much simulation time was needed to
-                 * travel the remaining distance at the current speed.
-                 */
-                const timeToDestinationMs = (remainingDistance / this.currentSpeed) * 1000;
-
-                remainingTime = Math.max(0, remainingTime - timeToDestinationMs);
-
-                /*
-                 * Generate and switch to the next route.
-                 */
-                const changed = this.changeDestination();
-
-                if (!changed) {
-                    this.currentSpeed = 0;
-
+                if (this.stoppedForMovement !== null) {
                     return;
                 }
-
-                continue;
             }
 
             /*
-             * Normal movement along the current path.
+             * Reached the end of the path.
              */
-            this.travelledDistance += distanceToTravel;
+            if (this.travelledDistance >= this.path.getTotalLength() - MathUtils.epsilon) {
+                this.travelledDistance = this.path.getTotalLength();
+
+                this.changeDestination();
+
+                /*
+                 * Continue on the newly generated path
+                 * using any remaining frame time.
+                 */
+                continue;
+            }
 
             return;
         }
     }
 
-    /**
-     * Generates a new destination from the vehicle's current
-     * location and finds a new path to it.
-     *
-     * Returns true if a new path was created successfully.
-     */
-    private changeDestination(): boolean {
-        const currentLocation = this.getCurrentPathLocation();
-
-        /*
-         * Generate a destination that is different from the
-         * vehicle's current location.
-         */
-        const destination = this.destinationGenerator.generate(currentLocation);
-
-        const newPath = this.pathfinder.findPath(currentLocation, destination);
-
-        if (!newPath) {
-            /*
-             * DestinationGenerator guarantees a different location,
-             * but the pathfinder can still theoretically fail.
-             *
-             * Try a few additional destinations before giving up.
-             */
-            const maxAttempts = 10;
-
-            for (let attempt = 0; attempt < maxAttempts; attempt++) {
-                const retryDestination = this.destinationGenerator.generate(currentLocation);
-
-                const retryPath = this.pathfinder.findPath(currentLocation, retryDestination);
-
-                if (retryPath) {
-                    this.path = retryPath;
-
-                    this.travelledDistance = 0;
-
-                    this.currentSpeed = 0;
-
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        this.path = newPath;
-
-        this.travelledDistance = 0;
-
-        this.currentSpeed = 0;
-
-        return true;
-    }
-
-    /**
-     * Returns the vehicle's current location on its current path.
-     */
-    private getCurrentPathLocation(): PathLocation {
-        return this.path.getPathLocationAtDistance(this.travelledDistance);
-    }
-
-    /**
-     * Returns the progress that the vehicle made in its travel along the path.
-     */
     getProgress(): number {
         const totalLength = this.path.getTotalLength();
 
-        if (totalLength === 0) {
+        if (totalLength <= 0) {
             return 1;
         }
 
         return this.travelledDistance / totalLength;
     }
 
-    /**
-     * Returns the vehicle's position on the map.
-     */
     getPosition(): Vector2 {
         return this.path.getPositionAtDistance(this.travelledDistance);
     }
 
-    /**
-     * Returns the vehicle's angle (rotation).
-     */
     getAngle(): number {
-        const distance = this.getTravelledDistance();
+        const distance = this.travelledDistance;
 
         const totalLength = this.path.getTotalLength();
+
+        if (totalLength <= 0) {
+            return 0;
+        }
 
         const currentDistance = MathUtils.clamp(
             distance,
@@ -266,16 +246,81 @@ export class Vehicle {
         return Angle.fromVector(nextPosition.subtract(currentPosition));
     }
 
+    private getTargetSpeed(): number {
+        /*
+         * Red-light stop has absolute priority.
+         */
+        if (this.stoppedForMovement !== null) {
+            return 0;
+        }
+
+        let targetSpeed = this.getTrafficLightTargetSpeed();
+
+        /*
+         * Apply collision-avoidance speed.
+         */
+        const vehicleAhead = this.vehicleDetector.findVehicleAhead(this);
+
+        if (vehicleAhead !== null) {
+            targetSpeed = Math.min(
+                targetSpeed,
+                this.getFollowingTargetSpeed(
+                    vehicleAhead.gap,
+                    vehicleAhead.vehicle.getCurrentSpeed(),
+                ),
+            );
+        }
+
+        return MathUtils.clamp(targetSpeed, 0, this.maxSpeed);
+    }
+
     /**
-     * Returns the speed limit for the vehicle based on traffic light state.
+     * Calculates a safe speed from the current gap
+     * and the speed of the vehicle ahead.
+     *
+     * The calculation assumes we can brake at our configured
+     * braking rate and attempts to preserve followingDistance.
      */
-    private getTrafficLightSpeedLimit(): number {
+    private getFollowingTargetSpeed(gap: number, vehicleAheadSpeed: number): number {
+        if (gap <= this.minimumGap + MathUtils.epsilon) {
+            return 0;
+        }
+
+        /*
+         * We only start actively matching the vehicle ahead
+         * when we enter the preferred following distance.
+         */
+        if (gap > this.followingDistance) {
+            return this.maxSpeed;
+        }
+
+        /*
+         * Distance available before reaching the preferred gap.
+         */
+        const availableGap = gap - this.followingDistance;
+
+        /*
+         * At or inside the preferred gap, calculate a speed
+         * that allows us to settle behind the vehicle ahead.
+         */
+        const safeSpeedSquared =
+            vehicleAheadSpeed * vehicleAheadSpeed + 2 * this.braking * Math.max(0, availableGap);
+
+        const safeSpeed = Math.sqrt(Math.max(0, safeSpeedSquared));
+
+        return Math.min(this.maxSpeed, Math.max(vehicleAheadSpeed, safeSpeed));
+    }
+
+    private getTrafficLightTargetSpeed(): number {
         const nextMovement = this.path.getNextMovement(this.travelledDistance);
 
         if (nextMovement === null) {
             return this.maxSpeed;
         }
 
+        /*
+         * The movement is allowed.
+         */
         if (this.trafficLightSystem.allowsMovement(nextMovement)) {
             return this.maxSpeed;
         }
@@ -291,26 +336,165 @@ export class Vehicle {
 
         const distanceToStop = distanceToMovement - this.stoppingDistance;
 
+        /*
+         * We are already at the stopping position.
+         */
         if (distanceToStop <= 0) {
+            return 0;
+        }
+
+        const brakingDistance = this.getBrakingDistance(this.currentSpeed);
+
+        /*
+         * Start braking as soon as the current speed
+         * requires braking to reach the stop point.
+         */
+        if (distanceToStop <= brakingDistance) {
             return 0;
         }
 
         return this.maxSpeed;
     }
 
-    private getTargetSpeed(): number {
-        let targetSpeed = this.getTrafficLightSpeedLimit();
+    private getRedLightStopDistance(): number | null {
+        if (this.stoppedForMovement !== null) {
+            return 0;
+        }
 
-        const vehicleAhead = this.vehicleDetector.findVehicleAhead(this);
+        const nextMovement = this.path.getNextMovement(this.travelledDistance);
 
-        if (vehicleAhead !== null) {
-            if (vehicleAhead.gap <= this.followingDistance) {
-                targetSpeed = 0;
-            } else {
-                targetSpeed = Math.min(targetSpeed, vehicleAhead.vehicle.getMaxSpeed());
+        if (nextMovement === null) {
+            return null;
+        }
+
+        if (this.trafficLightSystem.allowsMovement(nextMovement)) {
+            return null;
+        }
+
+        const distanceToMovement = this.path.getDistanceToMovement(
+            this.travelledDistance,
+            nextMovement,
+        );
+
+        if (distanceToMovement === null) {
+            return null;
+        }
+
+        const distanceToStop = distanceToMovement - this.stoppingDistance;
+
+        if (distanceToStop <= MathUtils.epsilon) {
+            return 0;
+        }
+
+        const brakingDistance = this.getBrakingDistance(this.currentSpeed);
+
+        /*
+         * Once we are inside the braking zone, clamp the
+         * actual movement so a large frame cannot carry us
+         * through the stop point.
+         */
+        if (brakingDistance >= distanceToStop) {
+            return distanceToStop;
+        }
+
+        return null;
+    }
+
+    private tryStopAtRedLight(): void {
+        const nextMovement = this.path.getNextMovement(this.travelledDistance);
+
+        if (nextMovement === null) {
+            return;
+        }
+
+        /*
+         * The light changed before we stopped.
+         */
+        if (this.trafficLightSystem.allowsMovement(nextMovement)) {
+            return;
+        }
+
+        const distanceToMovement = this.path.getDistanceToMovement(
+            this.travelledDistance,
+            nextMovement,
+        );
+
+        if (distanceToMovement === null) {
+            return;
+        }
+
+        const distanceToStop = distanceToMovement - this.stoppingDistance;
+
+        if (distanceToStop <= MathUtils.epsilon) {
+            const movementDistance = this.path.getMovementDistance(nextMovement);
+
+            if (movementDistance !== null) {
+                this.travelledDistance = Math.max(0, movementDistance - this.stoppingDistance);
+            }
+
+            this.currentSpeed = 0;
+
+            this.stoppedForMovement = nextMovement;
+        }
+    }
+
+    private getBrakingDistance(speed: number): number {
+        if (speed <= MathUtils.epsilon) {
+            return 0;
+        }
+
+        if (this.braking <= MathUtils.epsilon) {
+            return Number.POSITIVE_INFINITY;
+        }
+
+        return (speed * speed) / (2 * this.braking);
+    }
+
+    private moveTowardsSpeed(
+        currentSpeed: number,
+        targetSpeed: number,
+        deltaSeconds: number,
+    ): number {
+        if (deltaSeconds <= 0) {
+            return currentSpeed;
+        }
+
+        if (targetSpeed > currentSpeed) {
+            return Math.min(targetSpeed, currentSpeed + this.acceleration * deltaSeconds);
+        }
+
+        if (targetSpeed < currentSpeed) {
+            return Math.max(targetSpeed, currentSpeed - this.braking * deltaSeconds);
+        }
+
+        return currentSpeed;
+    }
+
+    private changeDestination(): void {
+        const start = this.path.getEndLocation();
+
+        const newPath = this.findNewPath(start);
+
+        this.path = newPath;
+
+        this.travelledDistance = 0;
+
+        this.currentSpeed = 0;
+
+        this.stoppedForMovement = null;
+    }
+
+    private findNewPath(start: PathLocation): Path {
+        for (let attempt = 0; attempt < 100; attempt++) {
+            const destination = this.destinationGenerator.generate(start);
+
+            const path = this.pathfinder.findPath(start, destination);
+
+            if (path !== null) {
+                return path;
             }
         }
 
-        return targetSpeed;
+        throw new Error('Failed to find a new path after reaching vehicle destination.');
     }
 }

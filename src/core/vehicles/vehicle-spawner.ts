@@ -38,35 +38,29 @@ export class VehicleSpawner {
 
         const path = this.pathfinder.findPath(start, destination);
 
-        if (!path) {
+        if (path === null) {
             throw new Error('Failed to find a path for spawned vehicle.');
         }
 
         return new Vehicle(
             path,
-            this.pathfinder,
-            this.destinationGenerator,
             this.vehicleConfig,
             this.trafficLightSystem,
             this.vehicleDetector,
+            this.pathfinder,
+            this.destinationGenerator,
         );
     }
 
     private generateStartLocation(): PathLocation {
-        const lane = this.getRandomLane();
-
-        const distance = Math.random() * lane.getLength();
-
-        return new PathLocation(lane, distance);
-    }
-
-    private getRandomLane(): Lane {
         if (this.lanes.length === 0) {
             throw new Error('Cannot spawn a vehicle without lanes.');
         }
 
-        const index = Math.floor(Math.random() * this.lanes.length);
+        const lane = this.lanes[Math.floor(Math.random() * this.lanes.length)];
 
-        return this.lanes[index];
+        const distance = Math.random() * lane.getLength();
+
+        return new PathLocation(lane, distance);
     }
 }
