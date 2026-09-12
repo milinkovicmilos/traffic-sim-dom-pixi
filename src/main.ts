@@ -717,6 +717,22 @@ function renderCurrentState(): void {
     activeRenderer.render(createRenderState(simulation));
 }
 
+interface RendererWithGpuTiming extends Renderer {
+    beginGpuTiming?(): void;
+    endGpuTiming?(): void;
+    consumeGpuTime?(): number | null;
+    resetGpuTiming?(): void;
+}
+
+function getActiveGpuRenderer(): RendererWithGpuTiming {
+    return activeRenderer as RendererWithGpuTiming;
+}
+
+function pollGpuTime(): void {
+    const gpuTime = getActiveGpuRenderer().consumeGpuTime?.() ?? null;
+    if (gpuTime !== null) benchmarkMonitor.recordGpuTime(gpuTime);
+}
+
 /* =============================================================
    RENDERER SWITCHING
 ============================================================= */
@@ -989,12 +1005,12 @@ function renderBenchmarkCurrent(now: number): void {
         ${metric('Frame', `${metrics.frameTimeMs.toFixed(2)} ms`)}
         ${metric('Simulation', `${metrics.simulationTimeMs.toFixed(2)} ms`)}
         ${metric('Renderer time', `${metrics.renderTimeMs.toFixed(2)} ms`)}
+        ${metric('GPU time', metrics.gpuTimeMs === null ? 'N/A' : `${metrics.gpuTimeMs.toFixed(2)} ms`)}
         ${metric('Main thread', `${metrics.mainThreadUtilization.toFixed(1)}%`)}
         ${metric(
             'JS heap (Chromium only)',
             metrics.memoryMb === null ? 'N/A' : `${metrics.memoryMb.toFixed(1)} MB`,
         )}
-        ${metric('Vehicles', String(metrics.vehicleCount))}
         ${metric('Frame count', String(metrics.frameCount))}
         ${metric('CPU cores', String(benchmarkMonitor.getEnvironment().logicalProcessors))}
     `;
@@ -1044,6 +1060,9 @@ function renderSnapshot(snapshot: BenchmarkSnapshot | null): void {
             ${metric('P95 simulation', `${snapshot.p95SimulationTime.toFixed(2)} ms`)}
             ${metric('Avg renderer', `${snapshot.averageRenderTime.toFixed(2)} ms`)}
             ${metric('P95 renderer', `${snapshot.p95RenderTime.toFixed(2)} ms`)}
+            ${metric('Avg GPU', formatGpuTime(snapshot.averageGpuTime))}
+            ${metric('P95 GPU', formatGpuTime(snapshot.p95GpuTime))}
+            ${metric('Peak GPU', formatGpuTime(snapshot.peakGpuTime))}
             ${metric('Main thread', `${snapshot.averageMainThreadUtilization.toFixed(1)}%`)}
             ${metric('Peak main thread', `${snapshot.peakMainThreadUtilization.toFixed(1)}%`)}
             ${metric('Memory start', formatMemory(snapshot.memoryStartMb))}
@@ -1078,6 +1097,10 @@ function renderSnapshot(snapshot: BenchmarkSnapshot | null): void {
 
 function formatMemory(value: number | null): string {
     return value === null ? 'N/A' : `${value.toFixed(1)} MB`;
+}
+
+function formatGpuTime(value: number | null): string {
+    return value === null ? 'N/A' : `${value.toFixed(2)} ms`;
 }
 
 /* =============================================================
@@ -1115,6 +1138,8 @@ benchmarkRecord.addEventListener('click', () => {
 
         return;
     }
+
+    getActiveGpuRenderer().resetGpuTiming?.();
 
     benchmarkMonitor.startRecording(activeRendererType);
 
@@ -1432,7 +1457,9 @@ const benchmarkSuiteRunner = new BenchmarkSuiteRunner(benchmarkMonitor, {
             updateInputs: true,
         });
 
-        return switchRendererInternal(renderer);
+        const switched = await switchRendererInternal(renderer);
+        if (switched) getActiveGpuRenderer().resetGpuTiming?.();
+        return switched;
     },
 
     getVehicleCount: () => simulation.getVehicles().length,
@@ -1653,17 +1680,12 @@ function renderBenchmarkResults(results: BenchmarkSuiteRunResult[]): void {
                                 ${statusLabel}
                             </span>
                         </td>
-                        <td colspan="12">
+                        <td colspan="14">
                             ${escapeHtml(result.reason ?? '')}
                         </td>
                     </tr>
                 `;
             }
-
-            const memoryDelta =
-                snapshot.memoryStartMb !== null && snapshot.memoryEndMb !== null
-                    ? `${(snapshot.memoryEndMb - snapshot.memoryStartMb).toFixed(1)} MB`
-                    : 'N/A';
 
             return `
                 <tr>
@@ -1706,13 +1728,16 @@ function renderBenchmarkResults(results: BenchmarkSuiteRunResult[]): void {
                         ${snapshot.averageRenderTime.toFixed(2)} ms
                     </td>
                     <td>
+                        ${formatGpuTime(snapshot.averageGpuTime)}
+                    </td>
+                    <td>
+                        ${formatGpuTime(snapshot.p95GpuTime)}
+                    </td>
+                    <td>
                         ${snapshot.averageMainThreadUtilization.toFixed(1)}%
                     </td>
                     <td>
-                        ${memoryDelta}
-                    </td>
-                    <td>
-                        ${snapshot.frameCount}
+                        ${formatMemory(snapshot.memoryPeakMb)}
                     </td>
                 </tr>
             `;
@@ -1736,9 +1761,10 @@ function renderBenchmarkResults(results: BenchmarkSuiteRunResult[]): void {
                         <th>Avg Sim</th>
                         <th>P95 Sim</th>
                         <th>Avg Render</th>
+                        <th>Avg GPU</th>
+                        <th>P95 GPU</th>
                         <th>Main Thread</th>
-                        <th>Memory Δ</th>
-                        <th>Frames</th>
+                        <th>Memory Peak</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1793,11 +1819,15 @@ function frame(currentTime: number): void {
         const renderState = createRenderState(simulation);
 
         const renderStart = performance.now();
-
-        activeRenderer.render(renderState);
-
+        const gpuRenderer = getActiveGpuRenderer();
+        gpuRenderer.beginGpuTiming?.();
+        try {
+            activeRenderer.render(renderState);
+        } finally {
+            gpuRenderer.endGpuTiming?.();
+        }
         const renderTime = performance.now() - renderStart;
-
+        pollGpuTime();
         const frameTime = performance.now() - frameStart;
 
         benchmarkMonitor.recordFrame(

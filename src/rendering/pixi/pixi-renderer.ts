@@ -9,6 +9,7 @@ import {
     Sprite,
     Text,
     Texture,
+    WebGLRenderer,
 } from 'pixi.js';
 
 import type { Road } from '@core/map/road';
@@ -57,6 +58,11 @@ interface StaticMapChunk {
     minY: number;
     maxX: number;
     maxY: number;
+}
+
+interface WebGLTimerExtension {
+    TIME_ELAPSED_EXT: number;
+    GPU_DISJOINT_EXT: number;
 }
 
 /*
@@ -109,11 +115,26 @@ const GLOW_INNER_ALPHA = 0.24;
  * STATIC MAP
  * =============================================================
  */
+
 const STATIC_CHUNK_SIZE = 2000;
 
 const STATIC_CHUNK_CULL_MARGIN = 300;
 
 const ROAD_EXTENDED_MARGIN = 500;
+
+/*
+ * =============================================================
+ * GPU TIMING
+ * =============================================================
+ *
+ * WebGL only.
+ *
+ * We sample one out of every five frames. GPU timer queries are
+ * asynchronous, so consumeGpuTime() returns the latest result
+ * that has become available.
+ */
+
+const GPU_SAMPLE_INTERVAL = 5;
 
 export class PixiRenderer implements Renderer {
     private readonly container: HTMLElement;
@@ -134,15 +155,35 @@ export class PixiRenderer implements Renderer {
     private vehiclesLayer!: ParticleContainer;
 
     private initialized = false;
-
-    /**
-     * The RoadMap currently represented by this renderer.
-     *
-     * The simulation can be rebuilt while this Pixi renderer stays
-     * initialized. Comparing the map reference lets us rebuild the
-     * cached static geometry when a new simulation/map is supplied.
-     */
     private renderedRoadMap: RoadMap | null = null;
+
+    /*
+     * =============================================================
+     * WEBGL GPU TIMING
+     * =============================================================
+     */
+
+    private webGl: WebGL2RenderingContext | null = null;
+
+    private webGlTimerExtension: WebGLTimerExtension | null = null;
+
+    private webGlActiveQuery: WebGLQuery | null = null;
+
+    private readonly webGlPendingQueries: WebGLQuery[] = [];
+
+    private gpuTimingFrameCounter = 0;
+
+    private gpuTimingSampleThisFrame = false;
+
+    private latestGpuTimeMs: number | null = null;
+
+    private gpuTimeAvailable = false;
+
+    /*
+     * =============================================================
+     * TEXTURES
+     * =============================================================
+     */
 
     private vehicleTexture!: Texture;
 
@@ -151,15 +192,28 @@ export class PixiRenderer implements Renderer {
     private trafficLightYellowTexture!: Texture;
     private trafficLightGreenTexture!: Texture;
 
+    /*
+     * =============================================================
+     * TRAFFIC LIGHTS
+     * =============================================================
+     */
+
     private readonly trafficLightElements = new Map<string, TrafficLightRenderObject>();
 
     /*
+     * =============================================================
+     * VEHICLES
+     * =============================================================
+     *
      * Persistent vehicle particles.
      */
+
     private readonly vehicleParticles: Particle[] = [];
 
     /*
-     * Static map chunks.
+     * =============================================================
+     * STATIC MAP CHUNKS
+     * =============================================================
      *
      * Each chunk has exactly:
      *
@@ -168,6 +222,7 @@ export class PixiRenderer implements Renderer {
      *
      * regardless of how many roads exist inside the chunk.
      */
+
     private readonly staticMapChunks = new Map<string, StaticMapChunk>();
 
     private mapMinX = 0;
@@ -175,11 +230,23 @@ export class PixiRenderer implements Renderer {
     private mapMaxX = 0;
     private mapMaxY = 0;
 
+    /*
+     * =============================================================
+     * CAMERA
+     * =============================================================
+     */
+
     private cameraX = 0;
     private cameraY = 0;
 
     private viewportWidth = 1;
     private viewportHeight = 1;
+
+    /*
+     * =============================================================
+     * POINTER
+     * =============================================================
+     */
 
     private resizeObserver?: ResizeObserver;
 
@@ -310,6 +377,11 @@ export class PixiRenderer implements Renderer {
 
         this.initialized = true;
 
+        /*
+         * GPU timing is only initialized for WebGL.
+         */
+        this.setupWebGlGpuTiming();
+
         this.resizeViewport();
     }
 
@@ -318,14 +390,6 @@ export class PixiRenderer implements Renderer {
             return;
         }
 
-        /*
-         * A benchmark run can replace the simulation and therefore
-         * provide a different RoadMap while this renderer instance
-         * remains initialized.
-         *
-         * Static Pixi geometry is cached for performance, so it must
-         * be rebuilt whenever the authoritative RoadMap changes.
-         */
         if (state.roadMap !== this.renderedRoadMap) {
             this.buildMap(state.roadMap);
 
@@ -349,59 +413,166 @@ export class PixiRenderer implements Renderer {
         this.app.render();
     }
 
-    destroy(): void {
-        this.resizeObserver?.disconnect();
+    /*
+     * =============================================================
+     * GPU TIMING API
+     * =============================================================
+     *
+     * These methods are intentionally not part of Renderer.
+     * main.ts can detect them through its optional GPU-timing interface.
+     */
 
-        this.resizeObserver = undefined;
-
-        this.unbindPointerEvents();
-
-        this.trafficLightElements.clear();
-
-        this.vehicleParticles.length = 0;
-
-        this.staticMapChunks.clear();
-
-        if (this.vehicleTexture) {
-            this.vehicleTexture.destroy(true);
+    beginGpuTiming(): void {
+        if (this.preference !== 'webgl') {
+            return;
         }
 
-        if (this.trafficLightHousingTexture) {
-            this.trafficLightHousingTexture.destroy(true);
+        this.gpuTimingFrameCounter += 1;
+
+        this.gpuTimingSampleThisFrame = this.gpuTimingFrameCounter % GPU_SAMPLE_INTERVAL === 0;
+
+        if (!this.gpuTimingSampleThisFrame) {
+            return;
         }
 
-        if (this.trafficLightRedTexture) {
-            this.trafficLightRedTexture.destroy(true);
+        if (!this.webGl || !this.webGlTimerExtension || this.webGlActiveQuery) {
+            return;
         }
 
-        if (this.trafficLightYellowTexture) {
-            this.trafficLightYellowTexture.destroy(true);
+        const query = this.webGl.createQuery();
+
+        if (!query) {
+            return;
         }
 
-        if (this.trafficLightGreenTexture) {
-            this.trafficLightGreenTexture.destroy(true);
+        this.webGl.beginQuery(this.webGlTimerExtension.TIME_ELAPSED_EXT, query);
+
+        this.webGlActiveQuery = query;
+    }
+
+    endGpuTiming(): void {
+        if (this.preference !== 'webgl' || !this.gpuTimingSampleThisFrame) {
+            return;
         }
 
-        if (this.app) {
-            this.app.destroy(true, {
-                children: true,
-                texture: false,
-            });
+        if (!this.webGl || !this.webGlTimerExtension || !this.webGlActiveQuery) {
+            return;
         }
 
-        this.container.replaceChildren();
+        this.webGl.endQuery(this.webGlTimerExtension.TIME_ELAPSED_EXT);
 
-        this.initialized = false;
+        this.webGlPendingQueries.push(this.webGlActiveQuery);
 
-        this.renderedRoadMap = null;
+        this.webGlActiveQuery = null;
+    }
 
-        this.cameraX = 0;
+    consumeGpuTime(): number | null {
+        if (this.preference !== 'webgl') {
+            return null;
+        }
 
-        this.cameraY = 0;
+        this.pollWebGlTiming();
 
-        this.viewportWidth = 1;
+        if (!this.gpuTimeAvailable) {
+            return null;
+        }
 
-        this.viewportHeight = 1;
+        this.gpuTimeAvailable = false;
+
+        return this.latestGpuTimeMs;
+    }
+
+    resetGpuTiming(): void {
+        this.resetWebGlTiming();
+
+        this.gpuTimingFrameCounter = 0;
+
+        this.gpuTimingSampleThisFrame = false;
+
+        this.latestGpuTimeMs = null;
+
+        this.gpuTimeAvailable = false;
+    }
+
+    /*
+     * =============================================================
+     * WEBGL GPU TIMING
+     * =============================================================
+     */
+
+    private setupWebGlGpuTiming(): void {
+        if (this.preference !== 'webgl') {
+            return;
+        }
+
+        const renderer = this.app.renderer as WebGLRenderer;
+
+        this.webGl = renderer.gl;
+
+        this.webGlTimerExtension = this.webGl.getExtension(
+            'EXT_disjoint_timer_query_webgl2',
+        ) as WebGLTimerExtension | null;
+    }
+
+    private pollWebGlTiming(): void {
+        if (!this.webGl || !this.webGlTimerExtension) {
+            return;
+        }
+
+        /*
+         * A disjoint event invalidates the GPU timing result.
+         */
+        if (this.webGl.getParameter(this.webGlTimerExtension.GPU_DISJOINT_EXT)) {
+            return;
+        }
+
+        for (let i = this.webGlPendingQueries.length - 1; i >= 0; i -= 1) {
+            const query = this.webGlPendingQueries[i];
+
+            const available = this.webGl.getQueryParameter(
+                query,
+                this.webGl.QUERY_RESULT_AVAILABLE,
+            ) as boolean;
+
+            if (!available) {
+                continue;
+            }
+
+            const nanoseconds = this.webGl.getQueryParameter(
+                query,
+                this.webGl.QUERY_RESULT,
+            ) as number;
+
+            this.webGl.deleteQuery(query);
+
+            this.webGlPendingQueries.splice(i, 1);
+
+            this.latestGpuTimeMs = nanoseconds / 1_000_000;
+
+            this.gpuTimeAvailable = true;
+        }
+    }
+
+    private resetWebGlTiming(): void {
+        if (!this.webGl) {
+            this.webGlPendingQueries.length = 0;
+
+            this.webGlActiveQuery = null;
+
+            return;
+        }
+
+        if (this.webGlActiveQuery) {
+            this.webGl.deleteQuery(this.webGlActiveQuery);
+
+            this.webGlActiveQuery = null;
+        }
+
+        for (const query of this.webGlPendingQueries) {
+            this.webGl.deleteQuery(query);
+        }
+
+        this.webGlPendingQueries.length = 0;
     }
 
     // =====================================================================
@@ -1046,8 +1217,11 @@ export class PixiRenderer implements Renderer {
 
         return {
             lamp,
+
             glowOuter,
+
             glowMiddle,
+
             glowInner,
         };
     }
@@ -1276,10 +1450,6 @@ export class PixiRenderer implements Renderer {
         }
     }
 
-    // =====================================================================
-    // POINTER
-    // =====================================================================
-
     private bindPointerEvents(): void {
         const canvas = this.app.canvas;
 
@@ -1362,15 +1532,72 @@ export class PixiRenderer implements Renderer {
         }
     };
 
-    // =====================================================================
-    // RESIZE
-    // =====================================================================
-
     private bindResize(): void {
         this.resizeObserver = new ResizeObserver(() => {
             this.resizeViewport();
         });
 
         this.resizeObserver.observe(this.container);
+    }
+
+    destroy(): void {
+        this.resizeObserver?.disconnect();
+
+        this.resizeObserver = undefined;
+
+        this.unbindPointerEvents();
+
+        this.trafficLightElements.clear();
+
+        this.vehicleParticles.length = 0;
+
+        this.staticMapChunks.clear();
+
+        if (this.vehicleTexture) {
+            this.vehicleTexture.destroy(true);
+        }
+
+        if (this.trafficLightHousingTexture) {
+            this.trafficLightHousingTexture.destroy(true);
+        }
+
+        if (this.trafficLightRedTexture) {
+            this.trafficLightRedTexture.destroy(true);
+        }
+
+        if (this.trafficLightYellowTexture) {
+            this.trafficLightYellowTexture.destroy(true);
+        }
+
+        if (this.trafficLightGreenTexture) {
+            this.trafficLightGreenTexture.destroy(true);
+        }
+
+        this.resetGpuTiming();
+
+        this.webGl = null;
+
+        this.webGlTimerExtension = null;
+
+        if (this.app) {
+            this.app.destroy(true, {
+                children: true,
+                texture: false,
+            });
+        }
+
+        this.container.replaceChildren();
+
+        this.initialized = false;
+
+        this.renderedRoadMap = null;
+
+        this.cameraX = 0;
+
+        this.cameraY = 0;
+
+        this.viewportWidth = 1;
+
+        this.viewportHeight = 1;
     }
 }

@@ -16,55 +16,40 @@ export interface BenchmarkEnvironment {
 
 export interface BenchmarkSnapshot {
     renderer: RendererType;
-
     durationMs: number;
-
     frameCount: number;
-
     averageFps: number;
     low1PercentFps: number;
-
     averageFrameTime: number;
     p95FrameTime: number;
-
     averageSimulationTime: number;
     p95SimulationTime: number;
-
     averageRenderTime: number;
     p95RenderTime: number;
-
+    averageGpuTime: number | null;
+    p95GpuTime: number | null;
+    peakGpuTime: number | null;
     averageMainThreadUtilization: number;
     peakMainThreadUtilization: number;
-
     memoryStartMb: number | null;
     memoryEndMb: number | null;
     memoryPeakMb: number | null;
-
     vehicleCount: number;
-
     rows: number;
     columns: number;
-
     environment: BenchmarkEnvironment;
 }
 
 export interface BenchmarkCurrentMetrics {
     renderer: RendererType;
-
     fps: number;
-
     frameTimeMs: number;
-
     simulationTimeMs: number;
-
     renderTimeMs: number;
-
+    gpuTimeMs: number | null;
     mainThreadUtilization: number;
-
     memoryMb: number | null;
-
     vehicleCount: number;
-
     frameCount: number;
 }
 
@@ -82,31 +67,24 @@ interface NavigatorWithDeviceMemory extends Navigator {
 
 export class BenchmarkMonitor {
     private recording = false;
-
     private recordingRenderer: RendererType | null = null;
-
     private recordingStartedAt = 0;
-
     private recordingSamples: BenchmarkFrameSample[] = [];
-
     private recordingMemoryStartMb: number | null = null;
-
     private recordingMemoryPeakMb: number | null = null;
-
     private currentMemoryMb: number | null = null;
-
     private lastMemorySampleTime = 0;
-
     private readonly liveFrameTimes: number[] = [];
-
     private readonly liveFrameTimeLimit = 60;
-
+    private latestGpuTimeMs: number | null = null;
+    private readonly gpuTimes: number[] = [];
     private currentMetrics: BenchmarkCurrentMetrics = {
         renderer: 'dom',
         fps: 0,
         frameTimeMs: 0,
         simulationTimeMs: 0,
         renderTimeMs: 0,
+        gpuTimeMs: null,
         mainThreadUtilization: 0,
         memoryMb: null,
         vehicleCount: 0,
@@ -127,12 +105,28 @@ export class BenchmarkMonitor {
         };
     }
 
+    recordGpuTime(gpuTimeMs: number): void {
+        if (!Number.isFinite(gpuTimeMs) || gpuTimeMs < 0) {
+            return;
+        }
+
+        this.latestGpuTimeMs = gpuTimeMs;
+
+        if (this.recording) {
+            this.gpuTimes.push(gpuTimeMs);
+        }
+    }
+
     resetLiveMetrics(renderer: RendererType, vehicleCount: number): void {
         this.liveFrameTimes.length = 0;
 
         this.currentMemoryMb = this.readMemoryMb();
 
         this.lastMemorySampleTime = performance.now();
+
+        this.latestGpuTimeMs = null;
+
+        this.gpuTimes.length = 0;
 
         this.currentMetrics = {
             renderer,
@@ -142,6 +136,8 @@ export class BenchmarkMonitor {
             frameTimeMs: 0,
 
             simulationTimeMs: 0,
+
+            gpuTimeMs: null,
 
             renderTimeMs: 0,
 
@@ -180,6 +176,10 @@ export class BenchmarkMonitor {
         this.recordingStartedAt = performance.now();
 
         this.recordingSamples = [];
+
+        this.gpuTimes.length = 0;
+
+        this.latestGpuTimeMs = null;
 
         this.recordingMemoryStartMb = this.readMemoryMb();
 
@@ -249,6 +249,12 @@ export class BenchmarkMonitor {
                 95,
             ),
 
+            averageGpuTime: this.gpuTimes.length === 0 ? null : this.average(this.gpuTimes),
+
+            p95GpuTime: this.gpuTimes.length === 0 ? null : this.percentile(this.gpuTimes, 95),
+
+            peakGpuTime: this.gpuTimes.length === 0 ? null : Math.max(...this.gpuTimes),
+
             averageMainThreadUtilization: this.average(
                 samples.map((sample) => sample.mainThreadUtilization),
             ),
@@ -279,6 +285,10 @@ export class BenchmarkMonitor {
 
         this.recordingSamples = [];
 
+        this.gpuTimes.length = 0;
+
+        this.latestGpuTimeMs = null;
+
         this.recordingMemoryStartMb = null;
 
         this.recordingMemoryPeakMb = null;
@@ -305,6 +315,13 @@ export class BenchmarkMonitor {
 
         const fps = averageLiveFrameTime > 0 ? 1000 / averageLiveFrameTime : 0;
 
+        /*
+         * This is the percentage of the frame budget spent by:
+         *
+         *   simulation + renderer
+         *
+         * It is not total browser main-thread utilization.
+         */
         const appTime = simulationTime + renderTime;
 
         const mainThreadUtilization = Math.min(100, Math.max(0, (appTime / safeFrameTime) * 100));
@@ -332,6 +349,8 @@ export class BenchmarkMonitor {
             frameTimeMs: safeFrameTime,
 
             simulationTimeMs: simulationTime,
+
+            gpuTimeMs: this.latestGpuTimeMs,
 
             renderTimeMs: renderTime,
 
