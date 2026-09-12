@@ -47,17 +47,76 @@ body {
     border-bottom: 1px solid #334155;
 }
 
+.simulation-toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    min-width: 0;
+}
+
 .simulation-title {
     margin: 0;
     font-size: 16px;
     font-weight: 700;
+    white-space: nowrap;
 }
+
+/* =============================================================
+   SCENARIO CONTROLS
+============================================================= */
+
+.scenario-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.scenario-control {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #94a3b8;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.scenario-control input {
+    width: 72px;
+    padding: 6px 8px;
+    color: #f8fafc;
+    background: #1e293b;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+}
+
+.scenario-control input:hover {
+    border-color: #64748b;
+}
+
+.scenario-control input:focus {
+    outline: none;
+    border-color: #64748b;
+    box-shadow: 0 0 0 2px rgba(100, 116, 139, 0.25);
+}
+
+.scenario-control input:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+/* =============================================================
+   RENDERER SELECTOR
+============================================================= */
 
 .renderer-selector {
     display: flex;
     align-items: center;
     gap: 8px;
     font-size: 14px;
+    white-space: nowrap;
 }
 
 .renderer-selector select {
@@ -67,6 +126,11 @@ body {
     border: 1px solid #475569;
     border-radius: 6px;
     cursor: pointer;
+}
+
+.renderer-selector select:disabled {
+    opacity: 0.55;
+    cursor: default;
 }
 
 /* =============================================================
@@ -203,11 +267,10 @@ body {
 .vehicle {
     position: absolute;
     z-index: 40;
-
-    /* The actual dimensions are supplied by DOMRenderer from VehicleConfig. */
+    /* The actual dimensions are supplied
+       by DOMRenderer from VehicleConfig. */
     width: 10px;
     height: 20px;
-
     transform-origin: 50% 50%;
     background: #38bdf8;
     border: 1px solid #e0f2fe;
@@ -222,16 +285,13 @@ body {
 
 .simulation-body {
     flex: 1 1 auto;
-
     display: flex;
-
     min-width: 0;
     min-height: 0;
 }
 
 .simulation-main {
     flex: 1 1 auto;
-
     min-width: 0;
     min-height: 0;
 }
@@ -242,16 +302,11 @@ body {
 
 .benchmark-panel {
     min-width: 400px;
-
     display: flex;
     flex-direction: column;
-
     overflow-y: auto;
-
     padding: 16px;
-
     background: #111827;
-
     border-left: 1px solid #334155;
 }
 
@@ -259,26 +314,20 @@ body {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-
     gap: 12px;
-
     padding-bottom: 14px;
 }
 
 .benchmark-panel-header h2 {
     margin: 0;
-
     font-size: 15px;
     font-weight: 700;
 }
 
 .benchmark-status {
     display: block;
-
     margin-top: 3px;
-
     font-size: 11px;
-
     color: #94a3b8;
 }
 
@@ -286,15 +335,10 @@ body {
 .benchmark-copy-button {
     border: 1px solid #475569;
     border-radius: 6px;
-
     padding: 7px 10px;
-
     color: #f8fafc;
-
     background: #1e293b;
-
     font-size: 11px;
-
     cursor: pointer;
 }
 
@@ -314,65 +358,46 @@ body {
 
 .benchmark-section {
     padding: 16px 0;
-
     border-top: 1px solid #334155;
 }
 
 .benchmark-section h3 {
     margin: 0 0 10px 0;
-
     font-size: 12px;
     font-weight: 700;
-
     color: #cbd5e1;
-
     text-transform: uppercase;
     letter-spacing: 0.04em;
 }
 
 .benchmark-grid {
     display: grid;
-
     grid-template-columns: repeat(2, minmax(0, 1fr));
-
     gap: 8px;
 }
 
 .benchmark-metric {
     min-width: 0;
-
     padding: 9px;
-
     background: #0f172a;
-
     border: 1px solid #1e293b;
-
     border-radius: 6px;
 }
 
 .benchmark-metric-label {
     display: block;
-
     margin-bottom: 3px;
-
     font-size: 10px;
-
     color: #64748b;
 }
 
 .benchmark-metric-value {
     display: block;
-
     overflow: hidden;
-
     color: #e2e8f0;
-
     font-size: 12px;
-
     font-variant-numeric: tabular-nums;
-
     text-overflow: ellipsis;
-
     white-space: nowrap;
 }
 
@@ -382,38 +407,25 @@ body {
 
 .benchmark-snapshot-meta {
     display: flex;
-
     align-items: center;
-
     justify-content: space-between;
-
     margin-bottom: 10px;
-
     color: #94a3b8;
-
     font-size: 11px;
-
     font-variant-numeric: tabular-nums;
 }
 
 .benchmark-empty {
     padding: 14px;
-
     color: #64748b;
-
     background: #0f172a;
-
     border: 1px dashed #334155;
-
     border-radius: 6px;
-
     font-size: 11px;
-
     text-align: center;
 }
 
 .benchmark-copy-button {
     width: 100%;
-
     margin-top: 10px;
 }
