@@ -4,43 +4,39 @@ import type { Vehicle } from './vehicle';
 
 export interface VehicleAhead {
     vehicle: Vehicle;
-
     /**
      * Bumper-to-bumper distance along the current vehicle's path.
      */
     gap: number;
 }
 
+interface LaneVehicleEntry {
+    vehicle: Vehicle;
+    laneDistance: number;
+}
+
 export class VehicleDetector {
     private vehicles: readonly Vehicle[] = [];
 
-    /*
-     * Vehicles are indexed by the lane they currently occupy.
-     *
-     * This index is rebuilt once per simulation step, before any
-     * vehicles are updated.
-     */
-    private readonly vehiclesByLane = new Map<Lane, Vehicle[]>();
+    private readonly vehiclesByLane = new Map<Lane, LaneVehicleEntry[]>();
 
     /*
-     * Scratch set reused during detection.
-     */
-    private readonly checkedVehicles = new Set<Vehicle>();
-
-    /*
-     * Never let vehicle following look arbitrarily far ahead.
-     *
-     * This prevents a vehicle on a later section of the route
-     * from becoming a blocker while it is still far away.
+     * Only vehicles reasonably close to the current vehicle
+     * need to be inspected.
      */
     private readonly maximumLookAheadDistance = 100;
 
+    /*
+     * Reused result scratch value.
+     *
+     * There is no Set allocation/clearing on every vehicle query.
+     */
     addVehicles(vehicles: readonly Vehicle[]): void {
         this.vehicles = vehicles;
     }
 
     /**
-     * Rebuilds the lane index.
+     * Rebuild the lane index.
      *
      * This should be called once per simulation step BEFORE
      * vehicles are updated.
@@ -48,10 +44,14 @@ export class VehicleDetector {
     rebuild(): void {
         this.vehiclesByLane.clear();
 
-        for (const vehicle of this.vehicles) {
+        for (let i = 0; i < this.vehicles.length; i++) {
+            const vehicle = this.vehicles[i];
+
             const path = vehicle.getPath();
 
-            const location = path.getPathLocationAtDistance(vehicle.getTravelledDistance());
+            const travelledDistance = vehicle.getTravelledDistance();
+
+            const location = path.getPathLocationAtDistance(travelledDistance);
 
             const lane = location.getLane();
 
@@ -63,7 +63,20 @@ export class VehicleDetector {
                 this.vehiclesByLane.set(lane, bucket);
             }
 
-            bucket.push(vehicle);
+            bucket.push({
+                vehicle,
+                laneDistance: location.getDistance(),
+            });
+        }
+
+        /*
+         * Sort each lane by physical lane position.
+         *
+         * Vehicles on the same lane can then be searched from
+         * closest to farthest rather than scanning arbitrary order.
+         */
+        for (const bucket of this.vehiclesByLane.values()) {
+            bucket.sort((a, b) => a.laneDistance - b.laneDistance);
         }
     }
 
@@ -72,68 +85,131 @@ export class VehicleDetector {
 
         const vehicleDistance = vehicle.getTravelledDistance();
 
-        this.checkedVehicles.clear();
+        const relevantLanes = this.getRelevantLanes(vehiclePath, vehicleDistance);
 
         let closest: VehicleAhead | null = null;
 
-        /*
-         * Only inspect:
-         *
-         *   1. the current lane
-         *   2. the immediately following lane
-         *
-         * and only within the configured maximum look-ahead
-         * distance.
-         */
-        const relevantLanes = this.getRelevantLanes(vehiclePath, vehicleDistance);
+        for (let laneIndex = 0; laneIndex < relevantLanes.length; laneIndex++) {
+            const lane = relevantLanes[laneIndex];
 
-        for (const lane of relevantLanes) {
-            const candidates = this.vehiclesByLane.get(lane);
+            const bucket = this.vehiclesByLane.get(lane);
 
-            if (!candidates || candidates.length === 0) {
+            if (!bucket || bucket.length === 0) {
                 continue;
             }
 
-            for (const other of candidates) {
-                if (other === vehicle) {
+            const currentVehicleLocation = vehiclePath.getPathLocationAtDistance(vehicleDistance);
+
+            /*
+             * For the current lane we can compare lane-local
+             * distances directly.
+             *
+             * For the next lane we still use path conversion
+             * because the vehicle hasn't reached that lane yet.
+             */
+            const currentLane = currentVehicleLocation.getLane();
+
+            const currentLaneDistance = currentVehicleLocation.getDistance();
+
+            if (lane === currentLane) {
+                const currentIndex = this.findFirstAhead(bucket, currentLaneDistance);
+
+                for (let i = currentIndex; i < bucket.length; i++) {
+                    const entry = bucket[i];
+
+                    if (entry.vehicle === vehicle) {
+                        continue;
+                    }
+
+                    const centerDistance = entry.laneDistance - currentLaneDistance;
+
+                    if (centerDistance <= 0) {
+                        continue;
+                    }
+
+                    const gap = centerDistance - entry.vehicle.getLength();
+
+                    if (gap <= 0 || gap > this.maximumLookAheadDistance) {
+                        break;
+                    }
+
+                    if (closest === null || gap < closest.gap) {
+                        closest = {
+                            vehicle: entry.vehicle,
+                            gap,
+                        };
+                    }
+
+                    /*
+                     * Because this lane bucket is sorted,
+                     * this is the closest candidate on it.
+                     */
+                    break;
+                }
+
+                continue;
+            }
+
+            /*
+             * Next-lane candidate.
+             *
+             * Only inspect candidates that are close enough to
+             * matter before the current vehicle reaches them.
+             */
+            for (let i = 0; i < bucket.length; i++) {
+                const entry = bucket[i];
+
+                if (entry.vehicle === vehicle) {
                     continue;
                 }
 
-                if (this.checkedVehicles.has(other)) {
+                const otherPathDistance = vehiclePath.getPathDistanceAtLaneDistance(
+                    lane,
+                    entry.laneDistance,
+                );
+
+                if (otherPathDistance === null) {
                     continue;
                 }
 
-                this.checkedVehicles.add(other);
+                const centerDistance = otherPathDistance - vehicleDistance;
 
-                const gap = this.getGap(vehiclePath, vehicleDistance, other);
-
-                if (gap === null || gap <= 0) {
+                if (centerDistance <= 0) {
                     continue;
                 }
 
-                /*
-                 * Never allow distant vehicles to affect this
-                 * vehicle's immediate driving decision.
-                 */
-                if (gap > this.maximumLookAheadDistance) {
+                if (centerDistance > this.maximumLookAheadDistance) {
+                    /*
+                     * This bucket is ordered by lane distance,
+                     * so subsequent vehicles cannot be closer.
+                     */
+                    break;
+                }
+
+                const gap = centerDistance - entry.vehicle.getLength();
+
+                if (gap <= 0) {
                     continue;
                 }
 
                 if (closest === null || gap < closest.gap) {
                     closest = {
-                        vehicle: other,
+                        vehicle: entry.vehicle,
                         gap,
                     };
                 }
+
+                /*
+                 * Bucket is ordered, therefore the first
+                 * relevant vehicle is the closest one.
+                 */
+                break;
             }
         }
 
         return closest;
     }
 
-    /**
-     * Returns the current lane plus at most one lane after it.
-     */
     private getRelevantLanes(path: Path, travelledDistance: number): readonly Lane[] {
         const lanes = path.getLanes();
 
@@ -141,65 +217,35 @@ export class VehicleDetector {
             return [];
         }
 
-        const location = path.getPathLocationAtDistance(travelledDistance);
+        const currentLaneIndex = path.getLaneIndexAtDistance(travelledDistance);
 
-        const currentLane = location.getLane();
-
-        const currentIndex = lanes.indexOf(currentLane);
-
-        if (currentIndex === -1) {
-            return [];
-        }
-
-        const endIndex = Math.min(lanes.length, currentIndex + 2);
-
-        return lanes.slice(currentIndex, endIndex);
+        /*
+         * Current lane + next lane.
+         *
+         * Avoid looking farther through the route because that
+         * creates unnecessary dependencies and can produce
+         * artificial traffic gridlock.
+         */
+        return lanes.slice(currentLaneIndex, Math.min(lanes.length, currentLaneIndex + 2));
     }
 
-    /**
-     * Converts the other vehicle's current position into the
-     * current vehicle's path-distance coordinate system.
-     */
-    private getGap(vehiclePath: Path, vehicleDistance: number, other: Vehicle): number | null {
-        const otherPath = other.getPath();
-
-        const otherDistance = other.getTravelledDistance();
-
-        const otherLocation = otherPath.getPathLocationAtDistance(otherDistance);
-
-        const otherLane = otherLocation.getLane();
+    private findFirstAhead(bucket: readonly LaneVehicleEntry[], laneDistance: number): number {
+        let low = 0;
+        let high = bucket.length;
 
         /*
-         * The other vehicle must actually be on a lane that is
-         * immediately relevant to this vehicle's path.
+         * Binary search for the first vehicle strictly ahead.
          */
-        const relevantLanes = this.getRelevantLanes(vehiclePath, vehicleDistance);
+        while (low < high) {
+            const mid = Math.floor((low + high) / 2);
 
-        if (!relevantLanes.includes(otherLane)) {
-            return null;
+            if (bucket[mid].laneDistance <= laneDistance) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
         }
 
-        const otherPathDistance = vehiclePath.getPathDistanceAtLaneDistance(
-            otherLane,
-            otherLocation.getDistance(),
-        );
-
-        if (otherPathDistance === null) {
-            return null;
-        }
-
-        const centerDistance = otherPathDistance - vehicleDistance;
-
-        /*
-         * A vehicle behind us is not a blocker.
-         */
-        if (centerDistance <= 0) {
-            return null;
-        }
-
-        /*
-         * Convert center-to-center distance into a bumper gap.
-         */
-        return centerDistance - other.getLength();
+        return low;
     }
 }
