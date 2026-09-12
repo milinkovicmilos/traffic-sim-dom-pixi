@@ -134,7 +134,15 @@ export class PixiRenderer implements Renderer {
     private vehiclesLayer!: ParticleContainer;
 
     private initialized = false;
-    private mapInitialized = false;
+
+    /**
+     * The RoadMap currently represented by this renderer.
+     *
+     * The simulation can be rebuilt while this Pixi renderer stays
+     * initialized. Comparing the map reference lets us rebuild the
+     * cached static geometry when a new simulation/map is supplied.
+     */
+    private renderedRoadMap: RoadMap | null = null;
 
     private vehicleTexture!: Texture;
 
@@ -310,12 +318,20 @@ export class PixiRenderer implements Renderer {
             return;
         }
 
-        if (!this.mapInitialized) {
+        /*
+         * A benchmark run can replace the simulation and therefore
+         * provide a different RoadMap while this renderer instance
+         * remains initialized.
+         *
+         * Static Pixi geometry is cached for performance, so it must
+         * be rebuilt whenever the authoritative RoadMap changes.
+         */
+        if (state.roadMap !== this.renderedRoadMap) {
             this.buildMap(state.roadMap);
 
             this.buildTrafficLights(state.trafficLights);
 
-            this.mapInitialized = true;
+            this.renderedRoadMap = state.roadMap;
 
             this.resizeViewport();
         }
@@ -377,7 +393,7 @@ export class PixiRenderer implements Renderer {
 
         this.initialized = false;
 
-        this.mapInitialized = false;
+        this.renderedRoadMap = null;
 
         this.cameraX = 0;
 

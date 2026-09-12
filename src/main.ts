@@ -867,6 +867,17 @@ async function rebuildSimulation(
 
         const rendererType = activeRendererType;
 
+        /*
+         * Replace the authoritative simulation before rendering or
+         * switching to another renderer.
+         *
+         * Inactive renderers remain initialized for fast switching.
+         * Their renderers compare the incoming RoadMap against the
+         * map they currently cache and rebuild static state when the
+         * simulation changes.
+         */
+        simulation = nextSimulation;
+
         activeRenderer.destroy();
 
         initializedRenderers.delete(rendererType);
@@ -876,8 +887,6 @@ async function rebuildSimulation(
         if (!initialized) {
             throw new Error(`Failed to reinitialize ${getRendererLabel(rendererType)}.`);
         }
-
-        simulation = nextSimulation;
 
         benchmarkMonitor.resetLiveMetrics(activeRendererType, simulation.getVehicles().length);
 
