@@ -45,8 +45,8 @@ const vehiclesConfig: VehicleConfig = {
     width: 8,
     maxSpeed: 50,
     count: 100,
-    followDistance: 12,
-    minimumGap: 10,
+    followDistance: 20,
+    minimumGap: 15,
     stoppingDistance: 35,
 };
 

@@ -24,6 +24,23 @@ export class Vehicle {
     private readonly minimumGap: number;
     private readonly length: number;
 
+    /*
+     * Maximum visual rotation speed in radians per second.
+     *
+     * 4.0 rad/s gives a reasonably natural turn while still
+     * allowing a U-turn to complete without looking sluggish.
+     */
+    private readonly steeringSpeed = 8;
+
+    /*
+     * Distance used to determine the local tangent of the path.
+     *
+     * This is deliberately small. We do NOT look far ahead,
+     * because doing so can skip across multiple path segments
+     * and produce incorrect directions around U-turns.
+     */
+    private readonly steeringSampleDistance = 2;
+
     private readonly trafficLightSystem: TrafficLightSystem;
     private readonly vehicleDetector: VehicleDetector;
     private readonly pathfinder: Pathfinder;
@@ -32,12 +49,12 @@ export class Vehicle {
     private currentSpeed = 0;
     private travelledDistance = 0;
 
-    /**
-     * The exact movement that caused this vehicle to stop.
-     *
-     * The vehicle remains stopped until this same movement
-     * becomes allowed.
+    /*
+     * Visual orientation is independent of the path geometry.
      */
+    private currentAngle = 0;
+    private angleInitialized = false;
+
     private stoppedForMovement: Movement | null = null;
 
     constructor(
@@ -49,16 +66,27 @@ export class Vehicle {
         destinationGenerator: DestinationGenerator,
     ) {
         this.path = path;
+
         this.acceleration = config.acceleration;
+
         this.braking = config.braking;
+
         this.maxSpeed = config.maxSpeed;
+
         this.stoppingDistance = config.stoppingDistance;
+
         this.followingDistance = config.followDistance;
+
         this.minimumGap = config.minimumGap;
+
         this.length = config.length;
+
         this.trafficLightSystem = trafficLightSystem;
+
         this.vehicleDetector = vehicleDetector;
+
         this.pathfinder = pathfinder;
+
         this.destinationGenerator = destinationGenerator;
     }
 
@@ -96,10 +124,15 @@ export class Vehicle {
 
         const remainingTime = deltaTime / 1000;
 
+        /*
+         * Visual steering is updated every frame.
+         */
+        this.updateAngle(deltaTime);
+
         while (remainingTime > MathUtils.epsilon) {
             /*
-             * A vehicle stopped by a red light cannot move
-             * until that exact movement becomes allowed.
+             * A vehicle stopped for a red light remains stopped
+             * until the exact movement becomes allowed.
              */
             if (this.stoppedForMovement !== null) {
                 if (!this.trafficLightSystem.allowsMovement(this.stoppedForMovement)) {
@@ -130,40 +163,24 @@ export class Vehicle {
             let distanceToTravel = averageSpeed * remainingTime;
 
             /*
-             * Red-light safety clamp.
+             * Never cross the red-light stopping point.
              */
             if (redLightStopDistance !== null) {
                 distanceToTravel = Math.min(distanceToTravel, Math.max(0, redLightStopDistance));
             }
 
             /*
-             * Vehicle-following safety clamp.
-             *
-             * Never allow the vehicle to travel farther than
-             * the amount of road available before the desired
-             * following distance.
-             *
-             * This is the final collision-prevention guard for
-             * each simulation step.
+             * Never enter the minimum safety gap.
              */
             if (vehicleAhead !== null) {
-                /*
-                 * The hard safety limit is independent from the
-                 * preferred following distance.
-                 */
-                const safeFollowDistance = Math.max(this.minimumGap, 0);
-
                 distanceToTravel = Math.min(
                     distanceToTravel,
-                    Math.max(0, vehicleAhead.gap - safeFollowDistance),
+                    Math.max(0, vehicleAhead.gap - this.minimumGap),
                 );
             }
 
             distanceToTravel = Math.min(distanceToTravel, availableDistance);
 
-            /*
-             * No movement is possible during this step.
-             */
             if (distanceToTravel <= MathUtils.epsilon) {
                 this.currentSpeed = 0;
 
@@ -175,9 +192,13 @@ export class Vehicle {
             this.travelledDistance += distanceToTravel;
 
             /*
-             * Check whether the red-light stopping point
-             * has just been reached.
+             * Update visual steering after movement as well.
+             *
+             * This is important when a frame crosses an
+             * intersection boundary.
              */
+            this.updateAngle(deltaTime);
+
             if (
                 redLightStopDistance !== null &&
                 redLightStopDistance - distanceToTravel <= MathUtils.epsilon
@@ -189,18 +210,11 @@ export class Vehicle {
                 }
             }
 
-            /*
-             * Reached the end of the path.
-             */
             if (this.travelledDistance >= this.path.getTotalLength() - MathUtils.epsilon) {
                 this.travelledDistance = this.path.getTotalLength();
 
                 this.changeDestination();
 
-                /*
-                 * Continue on the newly generated path
-                 * using any remaining frame time.
-                 */
                 continue;
             }
 
@@ -223,42 +237,118 @@ export class Vehicle {
     }
 
     getAngle(): number {
-        const distance = this.travelledDistance;
+        if (!this.angleInitialized) {
+            return this.getPathAngle();
+        }
 
+        return this.currentAngle;
+    }
+
+    /**
+     * Smooths visual rotation toward the actual local
+     * direction of the path.
+     *
+     * Unlike the previous look-ahead implementation, this
+     * never calculates a direction from a point on one road
+     * to a point several segments later.
+     */
+    private updateAngle(deltaTime: number): void {
+        const targetAngle = this.getPathAngle();
+
+        if (!this.angleInitialized) {
+            this.currentAngle = targetAngle;
+
+            this.angleInitialized = true;
+
+            return;
+        }
+
+        const deltaSeconds = deltaTime / 1000;
+
+        const angleDifference = this.normalizeAngle(targetAngle - this.currentAngle);
+
+        const maxAngleChange = this.steeringSpeed * deltaSeconds;
+
+        if (Math.abs(angleDifference) <= maxAngleChange) {
+            this.currentAngle = targetAngle;
+
+            return;
+        }
+
+        this.currentAngle = this.normalizeAngle(
+            this.currentAngle + Math.sign(angleDifference) * maxAngleChange,
+        );
+    }
+
+    /**
+     * Gets the local tangent of the current path segment.
+     *
+     * We sample only a tiny distance forward. When the vehicle
+     * reaches a corner, the target direction changes to the next
+     * segment, and steering smoothly follows it.
+     */
+    private getPathAngle(): number {
         const totalLength = this.path.getTotalLength();
 
         if (totalLength <= 0) {
             return 0;
         }
 
-        const currentDistance = MathUtils.clamp(
-            distance,
-            0,
-            Math.max(0, totalLength - MathUtils.epsilon),
-        );
+        const currentDistance = MathUtils.clamp(this.travelledDistance, 0, totalLength);
+
+        const sampleDistance = Math.min(this.steeringSampleDistance, totalLength);
+
+        /*
+         * Prefer sampling forward.
+         */
+        const forwardDistance = Math.min(totalLength, currentDistance + sampleDistance);
 
         const currentPosition = this.path.getPositionAtDistance(currentDistance);
 
-        const nextPosition = this.path.getPositionAtDistance(
-            Math.min(currentDistance + MathUtils.epsilon, totalLength),
-        );
+        const forwardPosition = this.path.getPositionAtDistance(forwardDistance);
 
-        return Angle.fromVector(nextPosition.subtract(currentPosition));
+        const forwardDirection = forwardPosition.subtract(currentPosition);
+
+        if (forwardDirection.magnitude() > MathUtils.epsilon) {
+            return Angle.fromVector(forwardDirection);
+        }
+
+        /*
+         * At the end of the path there may be no forward
+         * distance left, so use a short backward tangent.
+         */
+        const backwardDistance = Math.max(0, currentDistance - sampleDistance);
+
+        const backwardPosition = this.path.getPositionAtDistance(backwardDistance);
+
+        const backwardDirection = currentPosition.subtract(backwardPosition);
+
+        if (backwardDirection.magnitude() > MathUtils.epsilon) {
+            return Angle.fromVector(backwardDirection);
+        }
+
+        return this.currentAngle;
+    }
+
+    private normalizeAngle(angle: number): number {
+        while (angle > Math.PI) {
+            angle -= Math.PI * 2;
+        }
+
+        while (angle < -Math.PI) {
+            angle += Math.PI * 2;
+        }
+
+        return angle;
     }
 
     private getTargetSpeed(): number {
-        /*
-         * Red-light stop has absolute priority.
-         */
         if (this.stoppedForMovement !== null) {
             return 0;
         }
 
         let targetSpeed = this.getTrafficLightTargetSpeed();
 
-        /*
-         * Apply collision-avoidance speed.
-         */
         const vehicleAhead = this.vehicleDetector.findVehicleAhead(this);
 
         if (vehicleAhead !== null) {
@@ -274,35 +364,17 @@ export class Vehicle {
         return MathUtils.clamp(targetSpeed, 0, this.maxSpeed);
     }
 
-    /**
-     * Calculates a safe speed from the current gap
-     * and the speed of the vehicle ahead.
-     *
-     * The calculation assumes we can brake at our configured
-     * braking rate and attempts to preserve followingDistance.
-     */
     private getFollowingTargetSpeed(gap: number, vehicleAheadSpeed: number): number {
         if (gap <= this.minimumGap + MathUtils.epsilon) {
             return 0;
         }
 
-        /*
-         * We only start actively matching the vehicle ahead
-         * when we enter the preferred following distance.
-         */
         if (gap > this.followingDistance) {
             return this.maxSpeed;
         }
 
-        /*
-         * Distance available before reaching the preferred gap.
-         */
         const availableGap = gap - this.followingDistance;
 
-        /*
-         * At or inside the preferred gap, calculate a speed
-         * that allows us to settle behind the vehicle ahead.
-         */
         const safeSpeedSquared =
             vehicleAheadSpeed * vehicleAheadSpeed + 2 * this.braking * Math.max(0, availableGap);
 
@@ -318,9 +390,6 @@ export class Vehicle {
             return this.maxSpeed;
         }
 
-        /*
-         * The movement is allowed.
-         */
         if (this.trafficLightSystem.allowsMovement(nextMovement)) {
             return this.maxSpeed;
         }
@@ -336,19 +405,12 @@ export class Vehicle {
 
         const distanceToStop = distanceToMovement - this.stoppingDistance;
 
-        /*
-         * We are already at the stopping position.
-         */
         if (distanceToStop <= 0) {
             return 0;
         }
 
         const brakingDistance = this.getBrakingDistance(this.currentSpeed);
 
-        /*
-         * Start braking as soon as the current speed
-         * requires braking to reach the stop point.
-         */
         if (distanceToStop <= brakingDistance) {
             return 0;
         }
@@ -382,17 +444,12 @@ export class Vehicle {
 
         const distanceToStop = distanceToMovement - this.stoppingDistance;
 
-        if (distanceToStop <= MathUtils.epsilon) {
+        if (distanceToStop <= 0) {
             return 0;
         }
 
         const brakingDistance = this.getBrakingDistance(this.currentSpeed);
 
-        /*
-         * Once we are inside the braking zone, clamp the
-         * actual movement so a large frame cannot carry us
-         * through the stop point.
-         */
         if (brakingDistance >= distanceToStop) {
             return distanceToStop;
         }
@@ -407,9 +464,6 @@ export class Vehicle {
             return;
         }
 
-        /*
-         * The light changed before we stopped.
-         */
         if (this.trafficLightSystem.allowsMovement(nextMovement)) {
             return;
         }
@@ -482,6 +536,10 @@ export class Vehicle {
         this.currentSpeed = 0;
 
         this.stoppedForMovement = null;
+
+        this.currentAngle = this.getPathAngle();
+
+        this.angleInitialized = true;
     }
 
     private findNewPath(start: PathLocation): Path {

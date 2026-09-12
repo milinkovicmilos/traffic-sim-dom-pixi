@@ -54,8 +54,11 @@ export class Simulation {
      * Triggers the update method on every simulation system.
      */
     update(deltaTime: number): void {
+        if (deltaTime <= 0) {
+            return;
+        }
         this.trafficLightSystem.update(deltaTime);
-
+        this.vehicleDetector.rebuild();
         for (const vehicle of this.vehicles) {
             vehicle.update(deltaTime);
         }
