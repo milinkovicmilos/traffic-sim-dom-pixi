@@ -1004,15 +1004,15 @@ function renderBenchmarkCurrent(now: number): void {
         ${metric('FPS', metrics.fps.toFixed(1))}
         ${metric('Frame', `${metrics.frameTimeMs.toFixed(2)} ms`)}
         ${metric('Simulation', `${metrics.simulationTimeMs.toFixed(2)} ms`)}
-        ${metric('Renderer time', `${metrics.renderTimeMs.toFixed(2)} ms`)}
-        ${metric('GPU time', metrics.gpuTimeMs === null ? 'N/A' : `${metrics.gpuTimeMs.toFixed(2)} ms`)}
-        ${metric('Main thread', `${metrics.mainThreadUtilization.toFixed(1)}%`)}
+        ${metric('Renderer Time', `${metrics.renderTimeMs.toFixed(2)} ms`)}
+        ${metric('GPU Time', metrics.gpuTimeMs === null ? 'N/A' : `${metrics.gpuTimeMs.toFixed(2)} ms`)}
+        ${metric('Main Thread', `${metrics.mainThreadUtilization.toFixed(1)}%`)}
         ${metric(
-            'JS heap (Chromium only)',
+            'JS Heap (Chromium only)',
             metrics.memoryMb === null ? 'N/A' : `${metrics.memoryMb.toFixed(1)} MB`,
         )}
-        ${metric('Frame count', String(metrics.frameCount))}
-        ${metric('CPU cores', String(benchmarkMonitor.getEnvironment().logicalProcessors))}
+        ${metric('Frame Count', String(metrics.frameCount))}
+        ${metric('CPU Cores', String(benchmarkMonitor.getEnvironment().logicalProcessors))}
     `;
 }
 
@@ -1052,25 +1052,25 @@ function renderSnapshot(snapshot: BenchmarkSnapshot | null): void {
             </span>
         </div>
         <div class="benchmark-grid">
-            ${metric('Average FPS', snapshot.averageFps.toFixed(1))}
+            ${metric('Avg FPS', snapshot.averageFps.toFixed(1))}
             ${metric('1% low FPS', snapshot.low1PercentFps.toFixed(1))}
-            ${metric('Avg frame', `${snapshot.averageFrameTime.toFixed(2)} ms`)}
-            ${metric('P95 frame', `${snapshot.p95FrameTime.toFixed(2)} ms`)}
-            ${metric('Avg simulation', `${snapshot.averageSimulationTime.toFixed(2)} ms`)}
-            ${metric('P95 simulation', `${snapshot.p95SimulationTime.toFixed(2)} ms`)}
-            ${metric('Avg renderer', `${snapshot.averageRenderTime.toFixed(2)} ms`)}
-            ${metric('P95 renderer', `${snapshot.p95RenderTime.toFixed(2)} ms`)}
+            ${metric('Avg Frame', `${snapshot.averageFrameTime.toFixed(2)} ms`)}
+            ${metric('P95 Frame', `${snapshot.p95FrameTime.toFixed(2)} ms`)}
+            ${metric('Avg Simulation', `${snapshot.averageSimulationTime.toFixed(2)} ms`)}
+            ${metric('P95 Simulation', `${snapshot.p95SimulationTime.toFixed(2)} ms`)}
+            ${metric('Avg Renderer', `${snapshot.averageRenderTime.toFixed(2)} ms`)}
+            ${metric('P95 Renderer', `${snapshot.p95RenderTime.toFixed(2)} ms`)}
             ${metric('Avg GPU', formatGpuTime(snapshot.averageGpuTime))}
             ${metric('P95 GPU', formatGpuTime(snapshot.p95GpuTime))}
             ${metric('Peak GPU', formatGpuTime(snapshot.peakGpuTime))}
-            ${metric('Main thread', `${snapshot.averageMainThreadUtilization.toFixed(1)}%`)}
-            ${metric('Peak main thread', `${snapshot.peakMainThreadUtilization.toFixed(1)}%`)}
-            ${metric('Memory start', formatMemory(snapshot.memoryStartMb))}
-            ${metric('Memory end', formatMemory(snapshot.memoryEndMb))}
-            ${metric('Memory peak', formatMemory(snapshot.memoryPeakMb))}
+            ${metric('Avg Main Thread', `${snapshot.averageMainThreadUtilization.toFixed(1)}%`)}
+            ${metric('Peak Main Thread', `${snapshot.peakMainThreadUtilization.toFixed(1)}%`)}
+            ${metric('Memory Start', formatMemory(snapshot.memoryStartMb))}
+            ${metric('Memory End', formatMemory(snapshot.memoryEndMb))}
+            ${metric('Memory Peak', formatMemory(snapshot.memoryPeakMb))}
             ${metric('Vehicles', String(snapshot.vehicleCount))}
             ${metric('Map', `${snapshot.rows} × ${snapshot.columns}`)}
-            ${metric('CPU cores', String(environment.logicalProcessors))}
+            ${metric('CPU Cores', String(environment.logicalProcessors))}
             ${metric(
                 'Device memory',
                 environment.deviceMemoryGb === null ? 'N/A' : `${environment.deviceMemoryGb} GB`,
@@ -1763,7 +1763,7 @@ function renderBenchmarkResults(results: BenchmarkSuiteRunResult[]): void {
                         <th>Avg Render</th>
                         <th>Avg GPU</th>
                         <th>P95 GPU</th>
-                        <th>Main Thread</th>
+                        <th>Avg Main Thread</th>
                         <th>Memory Peak</th>
                     </tr>
                 </thead>
