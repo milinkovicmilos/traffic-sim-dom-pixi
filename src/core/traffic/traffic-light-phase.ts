@@ -14,9 +14,7 @@ export class TrafficLightPhase {
 
         this.duration = durationMs;
 
-        /*
-         * Keep the list immutable from the phase's point of view.
-         */
+        // Keep the list immutable from the phase's point of view.
         this.allowedMovements = [...allowedMovements];
     }
 

@@ -4,10 +4,7 @@ import type { Vehicle } from './vehicle';
 
 export interface VehicleAhead {
     vehicle: Vehicle;
-    /**
-     * Bumper-to-bumper distance along the current vehicle's path.
-     */
-    gap: number;
+    gap: number; // Bumper-to-bumper distance along the current vehicle's path.
 }
 
 interface LaneVehicleEntry {
@@ -17,16 +14,12 @@ interface LaneVehicleEntry {
 
 export class VehicleDetector {
     private vehicles: readonly Vehicle[] = [];
-
     private readonly vehiclesByLane = new Map<Lane, LaneVehicleEntry[]>();
 
-    /*
-     * Only vehicles reasonably close to the current vehicle
-     * need to be inspected.
-     */
+    // Only vehicles reasonably close to the current vehicle need to be inspected.
     private readonly maximumLookAheadDistance = 100;
 
-    /*
+    /**
      * Reused result scratch value.
      *
      * There is no Set allocation/clearing on every vehicle query.
@@ -46,20 +39,14 @@ export class VehicleDetector {
 
         for (let i = 0; i < this.vehicles.length; i++) {
             const vehicle = this.vehicles[i];
-
             const path = vehicle.getPath();
-
             const travelledDistance = vehicle.getTravelledDistance();
-
             const location = path.getPathLocationAtDistance(travelledDistance);
-
             const lane = location.getLane();
-
             let bucket = this.vehiclesByLane.get(lane);
 
             if (!bucket) {
                 bucket = [];
-
                 this.vehiclesByLane.set(lane, bucket);
             }
 
@@ -82,16 +69,13 @@ export class VehicleDetector {
 
     findVehicleAhead(vehicle: Vehicle): VehicleAhead | null {
         const vehiclePath = vehicle.getPath();
-
         const vehicleDistance = vehicle.getTravelledDistance();
-
         const relevantLanes = this.getRelevantLanes(vehiclePath, vehicleDistance);
 
         let closest: VehicleAhead | null = null;
 
         for (let laneIndex = 0; laneIndex < relevantLanes.length; laneIndex++) {
             const lane = relevantLanes[laneIndex];
-
             const bucket = this.vehiclesByLane.get(lane);
 
             if (!bucket || bucket.length === 0) {
@@ -108,7 +92,6 @@ export class VehicleDetector {
              * because the vehicle hasn't reached that lane yet.
              */
             const currentLane = currentVehicleLocation.getLane();
-
             const currentLaneDistance = currentVehicleLocation.getDistance();
 
             if (lane === currentLane) {

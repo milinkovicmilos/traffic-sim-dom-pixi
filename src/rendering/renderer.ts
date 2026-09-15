@@ -14,16 +14,12 @@ export interface TrafficLightRenderState {
 
 export interface RenderState {
     roadMap: RoadMap;
-
     trafficLights: readonly TrafficLightRenderState[];
-
     vehicles: readonly VehicleState[];
 }
 
 export interface Renderer {
     initialize(): void | Promise<void>;
-
     render(state: RenderState): void;
-
     destroy(): void;
 }

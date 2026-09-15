@@ -1,7 +1,6 @@
 import type { Road } from '@core/map/road';
 import type { RoadMap } from '@core/map/road-map';
 import type { VehicleState } from '@core/vehicles/vehicle-state';
-
 import type { Renderer, RenderState, TrafficLightRenderState } from '@rendering/renderer';
 
 export interface DOMRendererOptions {
@@ -39,29 +38,17 @@ export class DOMRenderer implements Renderer {
     private vehiclesLayer!: HTMLDivElement;
 
     private readonly trafficLightElements = new Map<string, TrafficLightElements>();
-
     private readonly vehicleElements = new Map<number, HTMLImageElement>();
 
     private initialized = false;
 
-    /**
-     * The RoadMap currently represented by the DOM.
-     *
-     * The simulation can replace its RoadMap between benchmark runs,
-     * while the renderer instance itself remains alive. Tracking the
-     * rendered map lets us rebuild static geometry when that happens.
-     */
     private renderedRoadMap: RoadMap | null = null;
 
     constructor(options: DOMRendererOptions) {
         this.container = options.container;
-
         this.padding = options.padding;
-
         this.roadWidth = options.roadWidth;
-
         this.vehicleLength = options.vehicleLength;
-
         this.vehicleWidth = options.vehicleWidth;
     }
 
@@ -71,13 +58,9 @@ export class DOMRenderer implements Renderer {
         }
 
         this.scene = this.createElement('scene');
-
         this.roadsLayer = this.createLayer('roads-layer');
-
         this.lanesLayer = this.createLayer('lanes-layer');
-
         this.trafficLightsLayer = this.createLayer('traffic-lights-layer');
-
         this.vehiclesLayer = this.createLayer('vehicles-layer');
 
         this.scene.append(
@@ -88,7 +71,6 @@ export class DOMRenderer implements Renderer {
         );
 
         this.container.replaceChildren(this.scene);
-
         this.initialized = true;
     }
 
@@ -97,33 +79,23 @@ export class DOMRenderer implements Renderer {
             this.initialize();
         }
 
-        /*
-         * A benchmark setup can replace the simulation's RoadMap while
-         * this renderer instance stays alive. Rebuild the static map and
-         * traffic-light elements whenever a different RoadMap is received.
-         */
+        // A benchmark setup can replace the simulation's RoadMap while this renderer instance stays alive.
+        // Rebuild the static map and traffic-light elements whenever a different RoadMap is received.
         if (state.roadMap !== this.renderedRoadMap) {
             this.renderMap(state.roadMap);
-
             this.createTrafficLights(state.trafficLights);
-
             this.renderedRoadMap = state.roadMap;
         }
 
         this.updateTrafficLights(state.trafficLights);
-
         this.updateVehicles(state.vehicles);
     }
 
     destroy(): void {
         this.vehicleElements.clear();
-
         this.trafficLightElements.clear();
-
         this.container.replaceChildren();
-
         this.initialized = false;
-
         this.renderedRoadMap = null;
     }
 
@@ -137,25 +109,19 @@ export class DOMRenderer implements Renderer {
 
     private renderMap(roadMap: RoadMap): void {
         this.roadsLayer.replaceChildren();
-
         this.lanesLayer.replaceChildren();
 
         for (const road of roadMap.getRoads()) {
             this.renderRoad(road);
-
             this.renderLaneDivider(road);
         }
     }
 
     private renderRoad(road: Road): void {
         const start = road.getNodeA().getPosition();
-
         const end = road.getNodeB().getPosition();
-
         const dx = end.x - start.x;
-
         const dy = end.y - start.y;
-
         const centerLength = Math.sqrt(dx * dx + dy * dy);
 
         if (centerLength === 0) {
@@ -163,25 +129,16 @@ export class DOMRenderer implements Renderer {
         }
 
         const rotation = Math.atan2(dy, dx);
-
         const extension = this.roadWidth / 2;
-
         const startX = start.x - Math.cos(rotation) * extension;
-
         const startY = start.y - Math.sin(rotation) * extension;
-
         const length = centerLength + extension * 2;
-
         const roadElement = this.createElement('road');
 
         roadElement.style.left = `${this.offsetX(startX)}px`;
-
         roadElement.style.top = `${this.offsetY(startY)}px`;
-
         roadElement.style.width = `${length}px`;
-
         roadElement.style.height = `${this.roadWidth}px`;
-
         roadElement.style.transform = `translateY(-50%) rotate(${rotation}rad)`;
 
         this.roadsLayer.appendChild(roadElement);
@@ -189,13 +146,9 @@ export class DOMRenderer implements Renderer {
 
     private renderLaneDivider(road: Road): void {
         const start = road.getNodeA().getPosition();
-
         const end = road.getNodeB().getPosition();
-
         const dx = end.x - start.x;
-
         const dy = end.y - start.y;
-
         const length = Math.sqrt(dx * dx + dy * dy);
 
         if (length === 0) {
@@ -203,15 +156,11 @@ export class DOMRenderer implements Renderer {
         }
 
         const rotation = Math.atan2(dy, dx);
-
         const divider = this.createElement('lane-divider');
 
         divider.style.left = `${this.offsetX(start.x)}px`;
-
         divider.style.top = `${this.offsetY(start.y)}px`;
-
         divider.style.width = `${length}px`;
-
         divider.style.transform = `translateY(-50%) rotate(${rotation}rad)`;
 
         this.lanesLayer.appendChild(divider);
@@ -219,12 +168,10 @@ export class DOMRenderer implements Renderer {
 
     private createTrafficLights(states: readonly TrafficLightRenderState[]): void {
         this.trafficLightsLayer.replaceChildren();
-
         this.trafficLightElements.clear();
 
         for (const state of states) {
             const elements = this.createTrafficLight(state);
-
             this.trafficLightElements.set(state.key, elements);
         }
     }
@@ -233,25 +180,20 @@ export class DOMRenderer implements Renderer {
         const root = this.createElement('traffic-light');
 
         root.style.left = `${this.offsetX(state.position.x)}px`;
-
         root.style.top = `${this.offsetY(state.position.y)}px`;
 
         const red = this.createElement('traffic-light-lamp');
-
         red.classList.add('traffic-light-lamp-red');
 
         const yellow = this.createElement('traffic-light-lamp');
-
         yellow.classList.add('traffic-light-lamp-yellow');
 
         const green = this.createElement('traffic-light-lamp');
-
         green.classList.add('traffic-light-lamp-green');
 
         const timer = this.createElement('traffic-light-timer');
 
         root.append(red, yellow, green, timer);
-
         this.trafficLightsLayer.appendChild(root);
 
         return {
@@ -272,9 +214,7 @@ export class DOMRenderer implements Renderer {
             }
 
             elements.red.classList.toggle('is-active', state.color === 'red');
-
             elements.yellow.classList.toggle('is-active', state.color === 'yellow');
-
             elements.green.classList.toggle('is-active', state.color === 'green');
 
             elements.timer.textContent = `${(state.remainingTime / 1000).toFixed(1)}s`;
@@ -291,9 +231,7 @@ export class DOMRenderer implements Renderer {
 
             if (!element) {
                 element = this.createVehicle();
-
                 this.vehicleElements.set(index, element);
-
                 this.vehiclesLayer.appendChild(element);
             }
 
@@ -311,7 +249,6 @@ export class DOMRenderer implements Renderer {
             }
 
             element.remove();
-
             this.vehicleElements.delete(index);
         }
     }
@@ -320,23 +257,14 @@ export class DOMRenderer implements Renderer {
         const element = document.createElement('img');
 
         element.className = 'vehicle';
-
         element.src = DOMRenderer.VEHICLE_IMAGE_URL;
-
         element.alt = '';
-
         element.draggable = false;
-
         element.decoding = 'async';
-
         element.setAttribute('aria-hidden', 'true');
 
-        /*
-         * Explicit dimensions keep the vehicle's physical
-         * footprint consistent with the simulation.
-         */
+        // Explicit dimensions keep the vehicle's physical footprint consistent with the simulation.
         element.style.width = `${this.vehicleLength}px`;
-
         element.style.height = `${this.vehicleWidth}px`;
 
         return element;
@@ -346,7 +274,6 @@ export class DOMRenderer implements Renderer {
         const element = this.createElement(className);
 
         element.style.position = 'absolute';
-
         element.style.inset = '0';
 
         return element;

@@ -1,5 +1,5 @@
 import type { RendererType } from '@rendering/renderer-factory';
-import type { BenchmarkSnapshot, BenchmarkMonitor } from './benchmark-monitor';
+import type { BenchmarkMonitor, BenchmarkSnapshot } from './benchmark-monitor';
 import type { BenchmarkSuiteConfig } from './benchmark-suite-config';
 
 export interface BenchmarkSuiteSetup {
@@ -64,11 +64,9 @@ export class BenchmarkSuiteRunner {
         }
 
         this.validateConfig(config);
-
         this.running = true;
 
         const results: BenchmarkSuiteRunResult[] = [];
-
         const totalRuns = config.setups.length * config.renderers.length;
 
         let completedRuns = 0;
@@ -98,7 +96,6 @@ export class BenchmarkSuiteRunner {
                         });
 
                         completedRuns += 1;
-
                         continue;
                     }
 
@@ -112,7 +109,6 @@ export class BenchmarkSuiteRunner {
                         });
 
                         completedRuns += 1;
-
                         continue;
                     }
 
@@ -178,7 +174,6 @@ export class BenchmarkSuiteRunner {
                         });
 
                         completedRuns += 1;
-
                         continue;
                     }
 

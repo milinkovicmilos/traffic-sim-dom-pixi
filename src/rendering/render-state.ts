@@ -151,10 +151,7 @@ function getTrafficLightPosition(lane: Lane): Vector2 {
 function getTrafficLightColor(phaseName: string, movementAllowed: boolean): TrafficLightColor {
     const normalized = phaseName.trim().toLowerCase();
 
-    /*
-     * Never display green/yellow for a movement that the
-     * controller says is prohibited.
-     */
+    // Never display green/yellow for a movement that the controller says is prohibited.
     if (!movementAllowed) {
         return 'red';
     }

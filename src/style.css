@@ -32,9 +32,7 @@ body {
     min-height: 0;
 }
 
-/* =============================================================
-   TOOLBAR
-============================================================= */
+/* Toolbar */
 
 .simulation-toolbar {
     display: flex;
@@ -61,9 +59,7 @@ body {
     white-space: nowrap;
 }
 
-/* =============================================================
-   SCENARIO CONTROLS
-============================================================= */
+/* Scenario controls */
 
 .scenario-controls {
     display: flex;
@@ -107,9 +103,7 @@ body {
     cursor: default;
 }
 
-/* =============================================================
-   RENDERER SELECTOR
-============================================================= */
+/* Renderer selector */
 
 .renderer-selector {
     display: flex;
@@ -133,9 +127,7 @@ body {
     cursor: default;
 }
 
-/* =============================================================
-   SCROLL VIEWPORT
-============================================================= */
+/* Scroll viewport */
 
 .simulation-scroll {
     width: 100%;
@@ -169,9 +161,7 @@ body {
     height: 100%;
 }
 
-/* =============================================================
-   LAYERS
-============================================================= */
+/* Layers */
 
 .roads-layer,
 .lanes-layer,
@@ -182,9 +172,7 @@ body {
     pointer-events: none;
 }
 
-/* =============================================================
-   ROADS
-============================================================= */
+/* Roads */
 
 .road {
     position: absolute;
@@ -202,9 +190,7 @@ body {
     z-index: 5;
 }
 
-/* =============================================================
-   TRAFFIC LIGHTS
-============================================================= */
+/* Traffic lights */
 
 .traffic-light {
     position: absolute;
@@ -260,9 +246,7 @@ body {
     white-space: nowrap;
 }
 
-/* =============================================================
-   VEHICLES
-============================================================= */
+/* Vehicles */
 
 .vehicle {
     position: absolute;
@@ -279,9 +263,7 @@ body {
     will-change: transform;
 }
 
-/* =============================================================
-   APPLICATION BODY
-============================================================= */
+/* Application body */
 
 .simulation-body {
     flex: 1 1 auto;
@@ -296,9 +278,7 @@ body {
     min-height: 0;
 }
 
-/* =============================================================
-   BENCHMARK PANEL
-============================================================= */
+/* Benchmark panel */
 
 .benchmark-panel {
     min-width: 400px;
@@ -369,9 +349,7 @@ body {
     background: #475569;
 }
 
-/* =============================================================
-   BENCHMARK SECTIONS
-============================================================= */
+/* Benchmark sections */
 
 .benchmark-section {
     padding: 16px 0;
@@ -379,7 +357,7 @@ body {
 }
 
 .benchmark-section h3 {
-    margin: 0 0 10px 0;
+    margin: 0 0 10px;
     font-size: 12px;
     font-weight: 700;
     color: #cbd5e1;
@@ -418,9 +396,7 @@ body {
     white-space: nowrap;
 }
 
-/* =============================================================
-   SNAPSHOT
-============================================================= */
+/* Snapshot */
 
 .benchmark-snapshot-meta {
     display: flex;
@@ -447,9 +423,7 @@ body {
     margin-top: 10px;
 }
 
-/* =============================================================
-   BENCHMARK MODALS
-============================================================= */
+/* Benchmark modals */
 
 .benchmark-modal[hidden] {
     display: none;
@@ -537,9 +511,7 @@ body {
     border-top: 1px solid #334155;
 }
 
-/* =============================================================
-   SUITE CONFIGURATION
-============================================================= */
+/* Suite configuration */
 
 .benchmark-config-content {
     overflow: auto;
@@ -689,9 +661,7 @@ body {
     cursor: default;
 }
 
-/* =============================================================
-   RESULTS TABLE
-============================================================= */
+/* Results table */
 
 .benchmark-results-content {
     overflow: auto;
@@ -773,9 +743,7 @@ body {
     background: #7f1d1d;
 }
 
-/* =============================================================
-   RESPONSIVE
-============================================================= */
+/* Responsive */
 
 @media (max-width: 1000px) {
     .benchmark-panel {

@@ -13,12 +13,9 @@ export class GridGenerator {
         this.config = config;
     }
 
-    /**
-     * Generates a random road map
-     */
+    /** Generates a random road map. */
     generate(): RoadMap {
         const nodes = this.createNodes();
-
         const roads: Road[] = [];
         const lanes: Lane[] = [];
 
@@ -28,12 +25,9 @@ export class GridGenerator {
         return new RoadMap(nodes, roads, lanes);
     }
 
-    /**
-     * Generates intersections for every row and column on the map
-     */
+    /** Generates intersections for every row and column on the map. */
     private createNodes(): RoadNode[] {
         const nodes: RoadNode[] = [];
-
         let id = 0;
 
         for (let row = 0; row < this.config.rows; row++) {
@@ -42,7 +36,6 @@ export class GridGenerator {
                     column * this.config.blockSize,
                     row * this.config.blockSize,
                 );
-
                 const type = this.getNodeType(row, column);
 
                 nodes.push(new RoadNode(id++, position, type));
@@ -52,16 +45,12 @@ export class GridGenerator {
         return nodes;
     }
 
-    /**
-     * Determines the type of node based on its position in a grid
-     */
+    /** Determines the type of node based on its position in a grid. */
     private getNodeType(row: number, column: number): NodeType {
         const isTop = row === 0;
         const isBottom = row === this.config.rows - 1;
-
         const isLeft = column === 0;
         const isRight = column === this.config.columns - 1;
-
         const isCorner = (isTop || isBottom) && (isLeft || isRight);
 
         if (isCorner) {
@@ -77,15 +66,12 @@ export class GridGenerator {
         return NodeType.FourWayIntersection;
     }
 
-    /**
-     * Generates the horizontal roads for all given nodes
-     */
+    /** Generates the horizontal roads for all given nodes. */
     private createHorizontalRoads(nodes: RoadNode[], roads: Road[], lanes: Lane[]): void {
         for (let row = 0; row < this.config.rows; row++) {
             for (let column = 0; column < this.config.columns - 1; column++) {
                 const nodeA = this.getNode(nodes, row, column);
                 const nodeB = this.getNode(nodes, row, column + 1);
-
                 const road = this.createRoad(nodeA, nodeB, roads.length, lanes);
 
                 roads.push(road);
@@ -93,15 +79,12 @@ export class GridGenerator {
         }
     }
 
-    /**
-     * Generates the vertical roads for all given nodes
-     */
+    /** Generates the vertical roads for all given nodes. */
     private createVerticalRoads(nodes: RoadNode[], roads: Road[], lanes: Lane[]): void {
         for (let row = 0; row < this.config.rows - 1; row++) {
             for (let column = 0; column < this.config.columns; column++) {
                 const nodeA = this.getNode(nodes, row, column);
                 const nodeB = this.getNode(nodes, row + 1, column);
-
                 const road = this.createRoad(nodeA, nodeB, roads.length, lanes);
 
                 roads.push(road);
@@ -109,19 +92,18 @@ export class GridGenerator {
         }
     }
 
-    /**
-     * Creates a two-way road between two nodes
-     */
+    /** Creates a two-way road between two nodes. */
     private createRoad(nodeA: RoadNode, nodeB: RoadNode, roadId: number, lanes: Lane[]): Road {
         const road = new Road(roadId, nodeA, nodeB);
-
         const laneOffset = this.config.laneWidth / 2;
 
         const forwardLane = new Lane(lanes.length, nodeA, nodeB, road, laneOffset);
+
         road.addForwardLane(forwardLane);
         lanes.push(forwardLane);
 
         const backwardLane = new Lane(lanes.length, nodeB, nodeA, road, laneOffset);
+
         road.addBackwardLane(backwardLane);
         lanes.push(backwardLane);
 
@@ -131,9 +113,7 @@ export class GridGenerator {
         return road;
     }
 
-    /**
-     * Gets a node from a flattened node array
-     */
+    /** Gets a node from a flattened node array. */
     private getNode(nodes: RoadNode[], row: number, column: number): RoadNode {
         const index = row * this.config.columns + column;
 

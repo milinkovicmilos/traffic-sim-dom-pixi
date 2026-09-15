@@ -119,34 +119,21 @@ export class BenchmarkMonitor {
 
     resetLiveMetrics(renderer: RendererType, vehicleCount: number): void {
         this.liveFrameTimes.length = 0;
-
         this.currentMemoryMb = this.readMemoryMb();
-
         this.lastMemorySampleTime = performance.now();
-
         this.latestGpuTimeMs = null;
-
         this.gpuTimes.length = 0;
 
         this.currentMetrics = {
             renderer,
-
             fps: 0,
-
             frameTimeMs: 0,
-
             simulationTimeMs: 0,
-
             gpuTimeMs: null,
-
             renderTimeMs: 0,
-
             mainThreadUtilization: 0,
-
             memoryMb: this.currentMemoryMb,
-
             vehicleCount,
-
             frameCount: 0,
         };
     }
@@ -156,7 +143,6 @@ export class BenchmarkMonitor {
 
         return {
             logicalProcessors: navigator.hardwareConcurrency || 1,
-
             deviceMemoryGb:
                 typeof navigatorWithMemory.deviceMemory === 'number'
                     ? navigatorWithMemory.deviceMemory
@@ -170,21 +156,13 @@ export class BenchmarkMonitor {
         }
 
         this.recording = true;
-
         this.recordingRenderer = renderer;
-
         this.recordingStartedAt = performance.now();
-
         this.recordingSamples = [];
-
         this.gpuTimes.length = 0;
-
         this.latestGpuTimeMs = null;
-
         this.recordingMemoryStartMb = this.readMemoryMb();
-
         this.recordingMemoryPeakMb = this.recordingMemoryStartMb;
-
         this.lastMemorySampleTime = performance.now();
     }
 
@@ -212,85 +190,55 @@ export class BenchmarkMonitor {
         }
 
         const samples = this.recordingSamples;
-
         const durationMs = Math.max(0, stoppedAt - this.recordingStartedAt);
-
         const recordingRenderer = this.recordingRenderer ?? renderer;
 
         const snapshot: BenchmarkSnapshot = {
             renderer: recordingRenderer,
-
             durationMs,
-
             frameCount: samples.length,
-
             averageFps: this.average(samples.map((sample) => sample.fps)),
-
             low1PercentFps: this.calculateLow1PercentFps(samples),
-
             averageFrameTime: this.average(samples.map((sample) => sample.frameTime)),
-
             p95FrameTime: this.percentile(
                 samples.map((sample) => sample.frameTime),
                 95,
             ),
-
             averageSimulationTime: this.average(samples.map((sample) => sample.simulationTime)),
-
             p95SimulationTime: this.percentile(
                 samples.map((sample) => sample.simulationTime),
                 95,
             ),
-
             averageRenderTime: this.average(samples.map((sample) => sample.renderTime)),
-
             p95RenderTime: this.percentile(
                 samples.map((sample) => sample.renderTime),
                 95,
             ),
-
             averageGpuTime: this.gpuTimes.length === 0 ? null : this.average(this.gpuTimes),
-
             p95GpuTime: this.gpuTimes.length === 0 ? null : this.percentile(this.gpuTimes, 95),
-
             peakGpuTime: this.gpuTimes.length === 0 ? null : Math.max(...this.gpuTimes),
-
             averageMainThreadUtilization: this.average(
                 samples.map((sample) => sample.mainThreadUtilization),
             ),
-
             peakMainThreadUtilization:
                 samples.length === 0
                     ? 0
                     : Math.max(...samples.map((sample) => sample.mainThreadUtilization)),
-
             memoryStartMb: this.recordingMemoryStartMb,
-
             memoryEndMb,
-
             memoryPeakMb: this.recordingMemoryPeakMb,
-
             vehicleCount,
-
             rows,
-
             columns,
-
             environment: this.getEnvironment(),
         };
 
         this.recordingRenderer = null;
-
         this.recordingStartedAt = 0;
-
         this.recordingSamples = [];
-
         this.gpuTimes.length = 0;
-
         this.latestGpuTimeMs = null;
-
         this.recordingMemoryStartMb = null;
-
         this.recordingMemoryPeakMb = null;
 
         return snapshot;
@@ -312,7 +260,6 @@ export class BenchmarkMonitor {
         }
 
         const averageLiveFrameTime = this.average(this.liveFrameTimes);
-
         const fps = averageLiveFrameTime > 0 ? 1000 / averageLiveFrameTime : 0;
 
         /*
@@ -323,12 +270,10 @@ export class BenchmarkMonitor {
          * It is not total browser main-thread utilization.
          */
         const appTime = simulationTime + renderTime;
-
         const mainThreadUtilization = Math.min(100, Math.max(0, (appTime / safeFrameTime) * 100));
 
         if (timestamp - this.lastMemorySampleTime >= 250) {
             this.currentMemoryMb = this.readMemoryMb();
-
             this.lastMemorySampleTime = timestamp;
 
             if (
@@ -343,38 +288,24 @@ export class BenchmarkMonitor {
 
         this.currentMetrics = {
             renderer: this.recordingRenderer ?? this.currentMetrics.renderer,
-
             fps,
-
             frameTimeMs: safeFrameTime,
-
             simulationTimeMs: simulationTime,
-
             gpuTimeMs: this.latestGpuTimeMs,
-
             renderTimeMs: renderTime,
-
             mainThreadUtilization,
-
             memoryMb: this.currentMemoryMb,
-
             vehicleCount,
-
             frameCount: this.currentMetrics.frameCount + 1,
         };
 
         if (this.recording) {
             this.recordingSamples.push({
                 timestamp,
-
                 frameTime: safeFrameTime,
-
                 simulationTime,
-
                 renderTime,
-
                 fps,
-
                 mainThreadUtilization,
             });
         }
@@ -382,7 +313,6 @@ export class BenchmarkMonitor {
 
     private readMemoryMb(): number | null {
         const performanceWithMemory = performance as PerformanceWithMemory;
-
         const memory = performanceWithMemory.memory;
 
         if (!memory) {
@@ -402,7 +332,6 @@ export class BenchmarkMonitor {
         const count = Math.max(1, Math.ceil(frameTimes.length * 0.01));
 
         const slowestFrames = frameTimes.slice(0, count);
-
         const averageSlowFrameTime = this.average(slowestFrames);
 
         return averageSlowFrameTime > 0 ? 1000 / averageSlowFrameTime : 0;
@@ -430,9 +359,7 @@ export class BenchmarkMonitor {
         const sorted = [...values].sort((a, b) => a - b);
 
         const index = (percentile / 100) * (sorted.length - 1);
-
         const lower = Math.floor(index);
-
         const upper = Math.ceil(index);
 
         if (lower === upper) {

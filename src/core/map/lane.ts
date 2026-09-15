@@ -6,7 +6,6 @@ import type { Road } from './road';
 
 export class Lane {
     private readonly id: number;
-
     private readonly startNode: RoadNode;
     private readonly endNode: RoadNode;
     private readonly road: Road;
@@ -48,40 +47,27 @@ export class Lane {
         return this.road;
     }
 
-    /**
-     * Returns the center position of the lane at its
-     * starting node.
-     */
+    /** Returns the center position of the lane at its starting node. */
     getStartPosition(): Vector2 {
         return this.getOffsetPosition(this.startNode.getPosition());
     }
 
-    /**
-     * Returns the center position of the lane at its
-     * ending node.
-     */
+    /** Returns the center position of the lane at its ending node. */
     getEndPosition(): Vector2 {
         return this.getOffsetPosition(this.endNode.getPosition());
     }
 
-    /**
-     * Returns the perpendicular distance from the road
-     * centerline to this lane's centerline.
-     */
+    /** Returns the perpendicular distance from the road centerline to this lane's centerline. */
     getLateralOffset(): number {
         return this.lateralOffset;
     }
 
-    /**
-     * Returns the length of the lane.
-     */
+    /** Returns the length of the lane. */
     getLength(): number {
         return this.startNode.getPosition().distanceTo(this.endNode.getPosition());
     }
 
-    /**
-     * Returns the rotation/heading of the lane.
-     */
+    /** Returns the rotation/heading of the lane. */
     getRotation(): number {
         const direction = this.getEndPosition().subtract(this.getStartPosition());
 
@@ -96,13 +82,9 @@ export class Lane {
      */
     getPosition(distance: number): Vector2 {
         const laneLength = this.getLength();
-
         const clampedDistance = MathUtils.clamp(0, distance, laneLength);
-
         const start = this.getStartPosition();
-
         const end = this.getEndPosition();
-
         const direction = start.unitVectorTo(end);
 
         return start.add(direction.multiplyByScalar(clampedDistance));
@@ -118,13 +100,9 @@ export class Lane {
         }
 
         const roadStart = this.startNode.getPosition();
-
         const roadEnd = this.endNode.getPosition();
-
         const dx = roadEnd.x - roadStart.x;
-
         const dy = roadEnd.y - roadStart.y;
-
         const length = Math.sqrt(dx * dx + dy * dy);
 
         if (length === 0) {
@@ -141,7 +119,6 @@ export class Lane {
          * right     → (-dy, dx)
          */
         const rightX = -dy / length;
-
         const rightY = dx / length;
 
         return new Vector2(

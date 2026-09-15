@@ -49,13 +49,6 @@ export class SeededRandom {
     }
 
     /**
-     * Returns a deterministic boolean.
-     */
-    nextBoolean(): boolean {
-        return this.next() < 0.5;
-    }
-
-    /**
      * Returns one element from a non-empty array.
      */
     pick<T>(values: readonly T[]): T {
@@ -64,25 +57,5 @@ export class SeededRandom {
         }
 
         return values[this.nextInt(0, values.length - 1)];
-    }
-
-    /**
-     * Returns the current internal state.
-     *
-     * Useful later if we want to save/restore benchmark runs.
-     */
-    getState(): number {
-        return this.state >>> 0;
-    }
-
-    /**
-     * Restores a previously captured state.
-     */
-    setState(state: number): void {
-        if (!Number.isInteger(state)) {
-            throw new Error('SeededRandom state must be an integer.');
-        }
-
-        this.state = state >>> 0;
     }
 }

@@ -3,11 +3,9 @@ import type { BenchmarkSuiteSetup } from './benchmark-suite';
 
 const FIXED_MAP_SIZE = 25;
 const FIXED_VEHICLE_COUNT = 1000;
-
 const FIXED_SMALL_MAP_SIZE = 5;
 const FIXED_SECOND_SMALL_MAP_SIZE = 10;
 const FIXED_SMALL_VEHICLE_COUNT = 100;
-
 const STANDARD_BENCHMARK_SEED = 123456789;
 
 export interface BenchmarkSuiteConfig {
