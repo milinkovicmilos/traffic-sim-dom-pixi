@@ -17,6 +17,8 @@ interface TrafficLightElements {
     yellow: HTMLDivElement;
     green: HTMLDivElement;
     timer: HTMLDivElement;
+    lastColor: TrafficLightRenderState['color'] | null;
+    lastTimerText: string;
 }
 
 export class DOMRenderer implements Renderer {
@@ -202,6 +204,8 @@ export class DOMRenderer implements Renderer {
             yellow,
             green,
             timer,
+            lastColor: null,
+            lastTimerText: '',
         };
     }
 
@@ -213,11 +217,20 @@ export class DOMRenderer implements Renderer {
                 continue;
             }
 
-            elements.red.classList.toggle('is-active', state.color === 'red');
-            elements.yellow.classList.toggle('is-active', state.color === 'yellow');
-            elements.green.classList.toggle('is-active', state.color === 'green');
+            if (elements.lastColor !== state.color) {
+                elements.red.classList.toggle('is-active', state.color === 'red');
+                elements.yellow.classList.toggle('is-active', state.color === 'yellow');
+                elements.green.classList.toggle('is-active', state.color === 'green');
 
-            elements.timer.textContent = `${(state.remainingTime / 1000).toFixed(1)}s`;
+                elements.lastColor = state.color;
+            }
+
+            const timerText = `${(state.remainingTime / 1000).toFixed(1)}s`;
+
+            if (elements.lastTimerText !== timerText) {
+                elements.timer.textContent = timerText;
+                elements.lastTimerText = timerText;
+            }
         }
     }
 

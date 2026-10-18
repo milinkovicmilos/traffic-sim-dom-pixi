@@ -20,7 +20,7 @@ export const standardBenchmarkSuite: BenchmarkSuiteConfig = {
     seed: STANDARD_BENCHMARK_SEED,
     warmupMs: 3000,
     durationMs: 10000,
-    renderers: ['dom', 'pixi-webgl'],
+    renderers: ['dom', 'pixi-webgl', 'pixi-webgpu'],
     setups: [
         {
             id: 'vehicles-1000',
@@ -65,14 +65,14 @@ export const standardBenchmarkSuite: BenchmarkSuiteConfig = {
             vehicleCount: FIXED_VEHICLE_COUNT,
         },
         {
-            id: 'map-60x60',
+            id: 'map-5x5',
             name: `${FIXED_SMALL_MAP_SIZE}x${FIXED_SMALL_MAP_SIZE} • ${FIXED_SMALL_VEHICLE_COUNT} vehicles`,
             rows: FIXED_SMALL_MAP_SIZE,
             columns: FIXED_SMALL_MAP_SIZE,
             vehicleCount: FIXED_SMALL_VEHICLE_COUNT,
         },
         {
-            id: 'map-60x60',
+            id: 'map-10x10',
             name: `${FIXED_SECOND_SMALL_MAP_SIZE}x${FIXED_SECOND_SMALL_MAP_SIZE} • ${FIXED_SMALL_VEHICLE_COUNT} vehicles`,
             rows: FIXED_SECOND_SMALL_MAP_SIZE,
             columns: FIXED_SECOND_SMALL_MAP_SIZE,
