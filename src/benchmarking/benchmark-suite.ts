@@ -38,6 +38,7 @@ export interface BenchmarkSuiteRunnerCallbacks {
 }
 
 export interface BenchmarkSuiteRunOptions {
+    runIndex: number;
     onProgress?: (progress: BenchmarkSuiteProgress) => void;
 }
 
@@ -57,7 +58,7 @@ export class BenchmarkSuiteRunner {
 
     async run(
         config: BenchmarkSuiteConfig,
-        options: BenchmarkSuiteRunOptions = {},
+        options: BenchmarkSuiteRunOptions,
     ): Promise<BenchmarkSuiteRunResult[]> {
         if (this.running) {
             throw new Error('A benchmark suite is already running.');
@@ -67,6 +68,7 @@ export class BenchmarkSuiteRunner {
         this.running = true;
 
         const results: BenchmarkSuiteRunResult[] = [];
+        const runLabel = { suiteId: config.id, runIndex: options.runIndex };
         const totalRuns = config.setups.length * config.renderers.length;
 
         let completedRuns = 0;
@@ -142,6 +144,7 @@ export class BenchmarkSuiteRunner {
                             this.callbacks.getVehicleCount(),
                             setup.rows,
                             setup.columns,
+                            runLabel,
                         );
 
                         results.push({

@@ -5,6 +5,7 @@ import type { RendererType } from '@rendering/renderer-factory';
 
 export interface AppElements {
     simulationRoot: HTMLElement;
+    simulationViewport: HTMLElement;
     rendererSelect: HTMLSelectElement;
     rowsInput: HTMLInputElement;
     columnsInput: HTMLInputElement;
@@ -13,6 +14,7 @@ export interface AppElements {
     pixiWebglRendererHost: HTMLDivElement;
     pixiWebgpuRendererHost: HTMLDivElement;
     benchmarkRecord: HTMLButtonElement;
+    benchmarkHostInput: HTMLInputElement;
     benchmarkConfigure: HTMLButtonElement;
     benchmarkSuiteRun: HTMLButtonElement;
     benchmarkStatus: HTMLElement;
@@ -111,6 +113,20 @@ export function renderApp(
                     </div>
 
                     <div class="benchmark-panel-actions">
+                        <label
+                            class="scenario-control"
+                            title="Machine ID used in exported file names (H{n}_…)"
+                        >
+                            <span>Host</span>
+                            <input
+                                id="benchmark-host-input"
+                                type="number"
+                                min="1"
+                                step="1"
+                                value="1"
+                                inputmode="numeric"
+                            />
+                        </label>
                         <button
                             id="benchmark-configure"
                             class="benchmark-record-button"
@@ -308,6 +324,7 @@ export function renderApp(
 
     const elements: AppElements = {
         simulationRoot: getRequiredElement('#simulation-content'),
+        simulationViewport: getRequiredElement('#simulation-root'),
         rendererSelect: getRequiredElement('#renderer-select'),
         rowsInput: getRequiredElement('#rows-input'),
         columnsInput: getRequiredElement('#columns-input'),
@@ -316,6 +333,7 @@ export function renderApp(
         pixiWebglRendererHost: getRequiredElement('#pixi-webgl-renderer-host'),
         pixiWebgpuRendererHost: getRequiredElement('#pixi-webgpu-renderer-host'),
         benchmarkRecord: getRequiredElement('#benchmark-record'),
+        benchmarkHostInput: getRequiredElement('#benchmark-host-input'),
         benchmarkConfigure: getRequiredElement('#benchmark-configure'),
         benchmarkSuiteRun: getRequiredElement('#benchmark-suite-run'),
         benchmarkStatus: getRequiredElement('#benchmark-status'),
@@ -425,6 +443,8 @@ export class BenchmarkUi {
                 ${metric('1% low FPS', snapshot.low1PercentFps.toFixed(1))}
                 ${metric('Avg Frame Time', `${snapshot.averageFrameTime.toFixed(2)} ms`)}
                 ${metric('P95 Frame Time', `${snapshot.p95FrameTime.toFixed(2)} ms`)}
+                ${metric('Avg rAF Interval', `${snapshot.averageRafInterval.toFixed(2)} ms`)}
+                ${metric('P95 rAF Interval', `${snapshot.p95RafInterval.toFixed(2)} ms`)}
                 ${metric('Avg Simulation', `${snapshot.averageSimulationTime.toFixed(2)} ms`)}
                 ${metric('P95 Simulation', `${snapshot.p95SimulationTime.toFixed(2)} ms`)}
                 ${metric('Avg Renderer', `${snapshot.averageRenderTime.toFixed(2)} ms`)}
@@ -446,6 +466,22 @@ export class BenchmarkUi {
                         ? 'N/A'
                         : `${environment.deviceMemoryGb} GB`,
                 )}
+                ${metric('GPU', environment.gpuName ?? 'N/A')}
+                ${metric(
+                    'Screen',
+                    `${environment.screenWidth} × ${environment.screenHeight} @${environment.devicePixelRatio}x`,
+                )}
+                ${metric(
+                    'Viewport',
+                    `${environment.viewportWidth} × ${environment.viewportHeight}`,
+                )}
+                ${metric(
+                    'Refresh Rate',
+                    environment.refreshRateEstimate === null
+                        ? 'N/A'
+                        : `${environment.refreshRateEstimate.toFixed(1)} Hz`,
+                )}
+                ${metric('Code Version', snapshot.codeVersion)}
             </div>
 
             <button
@@ -526,6 +562,7 @@ export class BenchmarkUi {
                     <td>${snapshot.low1PercentFps.toFixed(1)}</td>
                     <td>${snapshot.averageFrameTime.toFixed(2)} ms</td>
                     <td>${snapshot.p95FrameTime.toFixed(2)} ms</td>
+                    <td>${snapshot.averageRafInterval.toFixed(2)} ms</td>
                     <td>${snapshot.averageSimulationTime.toFixed(2)} ms</td>
                     <td>${snapshot.p95SimulationTime.toFixed(2)} ms</td>
                     <td>${snapshot.averageRenderTime.toFixed(2)} ms</td>
@@ -552,6 +589,7 @@ export class BenchmarkUi {
                             <th>1% Low</th>
                             <th>Avg Frame</th>
                             <th>P95 Frame</th>
+                            <th>Avg rAF</th>
                             <th>Avg Sim</th>
                             <th>P95 Sim</th>
                             <th>Avg Render</th>

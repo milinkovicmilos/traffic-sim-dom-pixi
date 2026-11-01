@@ -10,12 +10,14 @@ import {
     Text,
     Texture,
     WebGLRenderer,
+    WebGPURenderer,
 } from 'pixi.js';
 
 import type { Road } from '@core/map/road';
 import type { RoadMap } from '@core/map/road-map';
 import type { VehicleState } from '@core/vehicles/vehicle-state';
 import type { Renderer, RenderState, TrafficLightRenderState } from '@rendering/renderer';
+import { getWebGlGpuName, getWebGpuGpuName } from '@shared/utils/gpu/gpu-name';
 
 export interface PixiRendererOptions {
     container: HTMLElement;
@@ -130,6 +132,7 @@ export class PixiRenderer implements Renderer {
     private gpuTimingSampleThisFrame = false;
     private latestGpuTimeMs: number | null = null;
     private gpuTimeAvailable = false;
+    private gpuName: string | null = null;
 
     private vehicleTexture!: Texture;
     private trafficLightHousingTexture!: Texture;
@@ -251,6 +254,7 @@ export class PixiRenderer implements Renderer {
 
         this.initialized = true;
         this.setupWebGlGpuTiming();
+        this.gpuName = await this.readGpuName();
         this.resizeViewport();
     }
 
@@ -336,12 +340,31 @@ export class PixiRenderer implements Renderer {
         return this.latestGpuTimeMs;
     }
 
+    getGpuName(): string | null {
+        return this.gpuName;
+    }
+
     resetGpuTiming(): void {
         this.resetWebGlTiming();
         this.gpuTimingFrameCounter = 0;
         this.gpuTimingSampleThisFrame = false;
         this.latestGpuTimeMs = null;
         this.gpuTimeAvailable = false;
+    }
+
+    // Pixi may fall back to WebGL when WebGPU fails, so check the actual renderer.
+    private async readGpuName(): Promise<string | null> {
+        const renderer = this.app.renderer;
+
+        if (renderer instanceof WebGPURenderer) {
+            return getWebGpuGpuName(renderer.gpu.adapter);
+        }
+
+        if (renderer instanceof WebGLRenderer) {
+            return getWebGlGpuName(renderer.gl);
+        }
+
+        return null;
     }
 
     private setupWebGlGpuTiming(): void {
@@ -1199,6 +1222,7 @@ export class PixiRenderer implements Renderer {
 
         this.webGl = null;
         this.webGlTimerExtension = null;
+        this.gpuName = null;
 
         if (this.app) {
             this.app.destroy(true, {

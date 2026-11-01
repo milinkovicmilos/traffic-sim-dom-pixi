@@ -9,6 +9,7 @@ const FIXED_SMALL_VEHICLE_COUNT = 100;
 const STANDARD_BENCHMARK_SEED = 123456789;
 
 export interface BenchmarkSuiteConfig {
+    id: string;
     seed: number;
     warmupMs: number;
     durationMs: number;
@@ -17,6 +18,7 @@ export interface BenchmarkSuiteConfig {
 }
 
 export const standardBenchmarkSuite: BenchmarkSuiteConfig = {
+    id: 'standard',
     seed: STANDARD_BENCHMARK_SEED,
     warmupMs: 3000,
     durationMs: 10000,

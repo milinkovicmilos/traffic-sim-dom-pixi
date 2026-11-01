@@ -7,14 +7,38 @@ export interface BenchmarkFrameSample {
     renderTime: number;
     fps: number;
     mainThreadUtilization: number;
+    rafInterval: number | null;
 }
 
 export interface BenchmarkEnvironment {
     logicalProcessors: number;
     deviceMemoryGb: number | null;
+    userAgent: string;
+    screenWidth: number;
+    screenHeight: number;
+    devicePixelRatio: number;
+    viewportWidth: number;
+    viewportHeight: number;
+    gpuName: string | null;
+    refreshRateEstimate: number | null;
+}
+
+// Environment values only the app knows (scene element size, active renderer's GPU).
+export interface BenchmarkEnvironmentContext {
+    viewportWidth: number;
+    viewportHeight: number;
+    gpuName: string | null;
+}
+
+export interface BenchmarkRunLabel {
+    suiteId: string;
+    runIndex: number;
 }
 
 export interface BenchmarkSnapshot {
+    suiteId: string | null;
+    runIndex: number | null;
+    codeVersion: string;
     renderer: RendererType;
     durationMs: number;
     frameCount: number;
@@ -22,6 +46,8 @@ export interface BenchmarkSnapshot {
     low1PercentFps: number;
     averageFrameTime: number;
     p95FrameTime: number;
+    averageRafInterval: number;
+    p95RafInterval: number;
     averageSimulationTime: number;
     p95SimulationTime: number;
     averageRenderTime: number;
@@ -66,6 +92,8 @@ interface NavigatorWithDeviceMemory extends Navigator {
 }
 
 export class BenchmarkMonitor {
+    private readonly getEnvironmentContext: () => BenchmarkEnvironmentContext;
+    private refreshRateEstimate: number | null = null;
     private recording = false;
     private recordingRenderer: RendererType | null = null;
     private recordingStartedAt = 0;
@@ -91,7 +119,8 @@ export class BenchmarkMonitor {
         frameCount: 0,
     };
 
-    constructor() {
+    constructor(getEnvironmentContext: () => BenchmarkEnvironmentContext) {
+        this.getEnvironmentContext = getEnvironmentContext;
         this.currentMemoryMb = this.readMemoryMb();
     }
 
@@ -140,6 +169,7 @@ export class BenchmarkMonitor {
 
     getEnvironment(): BenchmarkEnvironment {
         const navigatorWithMemory = navigator as NavigatorWithDeviceMemory;
+        const context = this.getEnvironmentContext();
 
         return {
             logicalProcessors: navigator.hardwareConcurrency || 1,
@@ -147,7 +177,55 @@ export class BenchmarkMonitor {
                 typeof navigatorWithMemory.deviceMemory === 'number'
                     ? navigatorWithMemory.deviceMemory
                     : null,
+            userAgent: navigator.userAgent,
+            screenWidth: screen.width,
+            screenHeight: screen.height,
+            devicePixelRatio: window.devicePixelRatio || 1,
+            viewportWidth: context.viewportWidth,
+            viewportHeight: context.viewportHeight,
+            gpuName: context.gpuName,
+            refreshRateEstimate: this.refreshRateEstimate,
         };
+    }
+
+    /*
+     * Collects bare rAF intervals for the given duration and stores
+     * 1000 / median as the display refresh rate estimate (Hz).
+     *
+     * The caller must keep the simulation and renderer idle meanwhile,
+     * otherwise app work stretches the intervals.
+     */
+    async measureRefreshRate(durationMs: number): Promise<number | null> {
+        const intervals: number[] = [];
+
+        await new Promise<void>((resolve) => {
+            let startTime: number | null = null;
+            let previousTime: number | null = null;
+
+            const tick = (time: number): void => {
+                if (previousTime !== null) {
+                    intervals.push(time - previousTime);
+                }
+
+                previousTime = time;
+                startTime ??= time;
+
+                if (time - startTime >= durationMs) {
+                    resolve();
+                    return;
+                }
+
+                requestAnimationFrame(tick);
+            };
+
+            requestAnimationFrame(tick);
+        });
+
+        const medianInterval = this.percentile(intervals, 50);
+
+        this.refreshRateEstimate = medianInterval > 0 ? 1000 / medianInterval : null;
+
+        return this.refreshRateEstimate;
     }
 
     startRecording(renderer: RendererType): void {
@@ -171,6 +249,7 @@ export class BenchmarkMonitor {
         vehicleCount: number,
         rows: number,
         columns: number,
+        runLabel: BenchmarkRunLabel | null = null,
     ): BenchmarkSnapshot {
         if (!this.recording) {
             throw new Error('No benchmark recording is active.');
@@ -192,8 +271,14 @@ export class BenchmarkMonitor {
         const samples = this.recordingSamples;
         const durationMs = Math.max(0, stoppedAt - this.recordingStartedAt);
         const recordingRenderer = this.recordingRenderer ?? renderer;
+        const rafIntervals = samples
+            .map((sample) => sample.rafInterval)
+            .filter((interval) => interval !== null);
 
         const snapshot: BenchmarkSnapshot = {
+            suiteId: runLabel?.suiteId ?? null,
+            runIndex: runLabel?.runIndex ?? null,
+            codeVersion: __CODE_VERSION__,
             renderer: recordingRenderer,
             durationMs,
             frameCount: samples.length,
@@ -204,6 +289,8 @@ export class BenchmarkMonitor {
                 samples.map((sample) => sample.frameTime),
                 95,
             ),
+            averageRafInterval: this.average(rafIntervals),
+            p95RafInterval: this.percentile(rafIntervals, 95),
             averageSimulationTime: this.average(samples.map((sample) => sample.simulationTime)),
             p95SimulationTime: this.percentile(
                 samples.map((sample) => sample.simulationTime),
@@ -250,6 +337,7 @@ export class BenchmarkMonitor {
         simulationTime: number,
         renderTime: number,
         vehicleCount: number,
+        rafInterval: number | null,
     ): void {
         const safeFrameTime = Math.max(frameTime, 0.001);
 
@@ -307,6 +395,7 @@ export class BenchmarkMonitor {
                 renderTime,
                 fps,
                 mainThreadUtilization,
+                rafInterval,
             });
         }
     }
