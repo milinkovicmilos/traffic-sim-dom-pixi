@@ -1,6 +1,5 @@
 import type { Lane } from '@core/map/lane';
 import { PathLocation } from '@core/pathfinding/pathlocation';
-import { MathUtils } from '@shared/utils/math/math-utils';
 import type { SeededRandom } from '@shared/utils/math/seeded-random';
 
 export class DestinationGenerator {
@@ -8,10 +7,16 @@ export class DestinationGenerator {
 
     private readonly lanes: readonly Lane[];
     private readonly random: SeededRandom;
+    private readonly laneEndMargin: number;
 
-    constructor(lanes: readonly Lane[], random: SeededRandom) {
+    /**
+     * @param laneEndMargin Destinations stay this far from both lane
+     * ends, so vehicles never stop inside an intersection or past a stop line.
+     */
+    constructor(lanes: readonly Lane[], random: SeededRandom, laneEndMargin: number) {
         this.lanes = lanes;
         this.random = random;
+        this.laneEndMargin = laneEndMargin;
     }
 
     generate(start?: PathLocation): PathLocation {
@@ -23,7 +28,8 @@ export class DestinationGenerator {
             const lane = this.getRandomLane();
             const distance = this.getRandomDistance(lane);
 
-            if (start === undefined || !this.isSameLocation(start, lane, distance)) {
+            // A path always leaves its first lane, so the destination must be on another one.
+            if (start === undefined || start.getLane() !== lane) {
                 return new PathLocation(lane, distance);
             }
         }
@@ -38,14 +44,8 @@ export class DestinationGenerator {
     }
 
     private getRandomDistance(lane: Lane): number {
-        return this.random.next() * lane.getLength();
-    }
+        const range = lane.getLength() - this.laneEndMargin * 2;
 
-    private isSameLocation(start: PathLocation, lane: Lane, distance: number): boolean {
-        if (start.getLane() !== lane) {
-            return false;
-        }
-
-        return Math.abs(start.getDistance() - distance) < MathUtils.epsilon;
+        return this.laneEndMargin + this.random.next() * range;
     }
 }

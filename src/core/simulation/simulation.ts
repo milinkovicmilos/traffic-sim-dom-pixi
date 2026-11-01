@@ -10,6 +10,7 @@ import { TrafficLightSystem } from '@core/traffic/traffic-light-system';
 import { DestinationGenerator } from '@core/vehicles/destination-generator';
 import { Vehicle } from '@core/vehicles/vehicle';
 import { VehicleDetector } from '@core/vehicles/vehicle-detector';
+import { IntersectionReservations } from '@core/traffic/intersection-reservations';
 import { VehicleSpawner } from '@core/vehicles/vehicle-spawner';
 import type { VehicleState } from '@core/vehicles/vehicle-state';
 import type { SimulationConfig } from '@shared/config/simulation-config';
@@ -36,7 +37,11 @@ export class Simulation {
         this.trafficLightSystem = this.createTrafficLightSystem(this.roadMap);
         this.pathfinder = new Pathfinder(this.getMovementsArray());
 
-        this.destinationGenerator = new DestinationGenerator(this.roadMap.getLanes(), this.random);
+        this.destinationGenerator = new DestinationGenerator(
+            this.roadMap.getLanes(),
+            this.random,
+            this.config.vehicles.stoppingDistance,
+        );
 
         this.vehicleDetector = new VehicleDetector();
 
@@ -46,6 +51,7 @@ export class Simulation {
             this.destinationGenerator,
             this.config.vehicles,
             this.trafficLightSystem,
+            new IntersectionReservations(),
             this.vehicleDetector,
             this.random,
         );

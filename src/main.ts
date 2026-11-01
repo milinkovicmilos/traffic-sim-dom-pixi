@@ -384,6 +384,13 @@ async function rebuildSimulation(
     restartInProgress = true;
 
     try {
+        // Throws if the vehicles don't fit, so the current scenario only changes afterwards.
+        simulation = new Simulation({
+            ...createSimulationConfig(),
+            grid: { ...gridConfig, rows: nextRows, columns: nextColumns },
+            vehicles: { ...vehiclesConfig, count: nextVehicleCount },
+        });
+
         gridConfig.rows = nextRows;
         gridConfig.columns = nextColumns;
         vehiclesConfig.count = nextVehicleCount;
@@ -393,8 +400,6 @@ async function rebuildSimulation(
             elements.columnsInput.value = String(nextColumns);
             elements.vehiclesInput.value = String(nextVehicleCount);
         }
-
-        simulation = new Simulation(createSimulationConfig());
 
         const rendererType = activeRendererType;
 
@@ -453,6 +458,7 @@ async function restartSimulation(): Promise<void> {
         elements.benchmarkStatus.textContent = 'Live';
     } catch (error) {
         console.error('Could not restart simulation.', error);
+        window.alert(error instanceof Error ? error.message : String(error));
 
         elements.rowsInput.value = String(gridConfig.rows);
         elements.columnsInput.value = String(gridConfig.columns);

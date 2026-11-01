@@ -112,7 +112,7 @@ export class VehicleDetector {
 
                     const gap = centerDistance - entry.vehicle.getLength();
 
-                    if (gap <= 0 || gap > this.maximumLookAheadDistance) {
+                    if (gap > this.maximumLookAheadDistance) {
                         break;
                     }
 
@@ -171,10 +171,6 @@ export class VehicleDetector {
 
                 const gap = centerDistance - entry.vehicle.getLength();
 
-                if (gap <= 0) {
-                    continue;
-                }
-
                 if (closest === null || gap < closest.gap) {
                     closest = {
                         vehicle: entry.vehicle,
@@ -191,6 +187,17 @@ export class VehicleDetector {
         }
 
         return closest;
+    }
+
+    /**
+     * Returns the lane distance of the first vehicle that has
+     * finished entering the lane, or null if there is none.
+     */
+    findQueueStart(lane: Lane): number | null {
+        const bucket = this.vehiclesByLane.get(lane) ?? [];
+        const entry = bucket.find(({ vehicle }) => !vehicle.isClearingIntersection());
+
+        return entry?.laneDistance ?? null;
     }
 
     private getRelevantLanes(path: Path, travelledDistance: number): readonly Lane[] {
