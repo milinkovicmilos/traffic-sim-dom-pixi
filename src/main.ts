@@ -13,6 +13,7 @@ import {
 } from '@benchmarking/benchmark-suite-config';
 import type { RendererType } from '@rendering/renderer-factory';
 import { probeWebGlGpuName } from '@shared/utils/gpu/gpu-name';
+import { SimulationTrace } from '@benchmarking/simulation-trace';
 
 import {
     renderApp,
@@ -128,6 +129,10 @@ let previousRafTime: number | null = null;
 let suiteRunCount = 0;
 let probedGpuName: string | null | undefined;
 let browserRenderStart: number | null = null;
+// Kept between the renderers of one setup, so all of them replay the same states.
+let suiteTrace: { setupId: string; trace: SimulationTrace } | null = null;
+let generatingTrace = false;
+let replayStartTime: number | null = null;
 
 const REFRESH_RATE_MEASUREMENT_MS = 2000;
 const HOST_ID_STORAGE_KEY = 'benchmark-host-id';
@@ -168,7 +173,7 @@ function getProbedGpuName(): string | null {
 
 import { createRenderer, type RendererOptions } from '@rendering/renderer-factory';
 import { createRenderState } from '@rendering/render-state';
-import type { Renderer } from '@rendering/renderer';
+import type { Renderer, RenderState } from '@rendering/renderer';
 
 const rendererOptions: RendererOptions = {
     dom: {
@@ -288,10 +293,6 @@ async function initializeRenderer(type: RendererType): Promise<boolean> {
 
         return false;
     }
-}
-
-function renderCurrentState(): void {
-    activeRenderer.render(createRenderState(simulation));
 }
 
 async function switchRendererInternal(type: RendererType): Promise<boolean> {
@@ -568,7 +569,7 @@ function closeBenchmarkResultsModal(): void {
 }
 
 const benchmarkSuiteRunner = new BenchmarkSuiteRunner(benchmarkMonitor, {
-    prepareRun: async (setup, renderer, seed) => {
+    prepareRun: async (setup, renderer, seed, timelineMs) => {
         currentSimulationSeed = seed;
 
         await rebuildSimulation(setup.rows, setup.columns, setup.vehicleCount, {
@@ -578,14 +579,45 @@ const benchmarkSuiteRunner = new BenchmarkSuiteRunner(benchmarkMonitor, {
 
         const switched = await switchRendererInternal(renderer);
 
-        if (switched) {
-            getActiveGpuRenderer().resetGpuTiming?.();
+        if (!switched) {
+            return null;
         }
 
-        return switched;
+        const trace =
+            suiteTrace?.setupId === setup.id
+                ? suiteTrace.trace
+                : await generateSuiteTrace(setup, timelineMs);
+
+        getActiveGpuRenderer().resetGpuTiming?.();
+        replayStartTime = null;
+
+        return trace.getInfo();
     },
     getVehicleCount: () => simulation.getVehicles().length,
 });
+
+async function generateSuiteTrace(
+    setup: BenchmarkSuiteSetup,
+    timelineMs: number,
+): Promise<SimulationTrace> {
+    // Release the previous setup's states first, they can take hundreds of megabytes.
+    suiteTrace = null;
+    generatingTrace = true;
+    elements.benchmarkStatus.textContent = `Generating states • ${setup.name}`;
+
+    try {
+        const trace = await SimulationTrace.generate(
+            new Simulation(createSimulationConfig()),
+            timelineMs,
+        );
+
+        suiteTrace = { setupId: setup.id, trace };
+
+        return trace;
+    } finally {
+        generatingTrace = false;
+    }
+}
 
 function loadHostId(): void {
     try {
@@ -730,6 +762,8 @@ async function startBenchmarkSuite(config: BenchmarkSuiteConfig): Promise<void> 
         console.error('Benchmark suite failed.', error);
     } finally {
         elements.benchmarkStatus.textContent = 'Restoring scenario…';
+
+        suiteTrace = null;
 
         try {
             currentSimulationSeed = originalSeed;
@@ -963,6 +997,16 @@ async function start(): Promise<void> {
     requestAnimationFrame(frame);
 }
 
+function getReplayState(currentTime: number): RenderState | null {
+    if (!suiteTrace) {
+        return null;
+    }
+
+    replayStartTime ??= currentTime;
+
+    return suiteTrace.trace.getRenderState(currentTime - replayStartTime, simulation.getRoadMap());
+}
+
 function frame(currentTime: number): void {
     // Real display interval: difference between consecutive rAF timestamps,
     // unlike frameTime, which only covers the app's own work.
@@ -971,7 +1015,12 @@ function frame(currentTime: number): void {
     previousRafTime = currentTime;
     browserRenderStart = null;
 
-    if (restartInProgress || rendererOperationInProgress || refreshRateMeasurementInProgress) {
+    if (
+        restartInProgress ||
+        rendererOperationInProgress ||
+        refreshRateMeasurementInProgress ||
+        generatingTrace
+    ) {
         previousTime = currentTime;
         requestAnimationFrame(frame);
         return;
@@ -983,9 +1032,14 @@ function frame(currentTime: number): void {
 
         previousTime = currentTime;
 
+        // Part of frameTime, but neither simulation nor rendering work.
+        const replayState = getReplayState(currentTime);
+
         const simulationStart = performance.now();
 
-        simulation.update(deltaTime);
+        if (!replayState) {
+            simulation.update(deltaTime);
+        }
 
         const simulationTime = performance.now() - simulationStart;
 
@@ -995,7 +1049,7 @@ function frame(currentTime: number): void {
         gpuRenderer.beginGpuTiming?.();
 
         try {
-            void renderCurrentState();
+            activeRenderer.render(replayState ?? createRenderState(simulation));
         } finally {
             gpuRenderer.endGpuTiming?.();
         }

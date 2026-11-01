@@ -1,4 +1,5 @@
 import type { RendererType } from '@rendering/renderer-factory';
+import { average, percentile } from '@shared/utils/math/statistics';
 
 export interface BenchmarkFrameSample {
     timestamp: number;
@@ -164,9 +165,7 @@ export class BenchmarkMonitor {
         this.currentMemoryMb = this.readMemoryMb();
         this.lastMemorySampleTime = performance.now();
         this.latestGpuTimeMs = null;
-        this.gpuTimes.length = 0;
         this.latestBrowserRenderTimeMs = null;
-        this.browserRenderTimes.length = 0;
 
         this.currentMetrics = {
             renderer,
@@ -237,7 +236,7 @@ export class BenchmarkMonitor {
             requestAnimationFrame(tick);
         });
 
-        const medianInterval = this.percentile(intervals, 50);
+        const medianInterval = percentile(intervals, 50);
 
         this.refreshRateEstimate = medianInterval > 0 ? 1000 / medianInterval : null;
 
@@ -291,7 +290,7 @@ export class BenchmarkMonitor {
         const rafIntervals = samples
             .map((sample) => sample.rafInterval)
             .filter((interval) => interval !== null);
-        const averageRafInterval = this.average(rafIntervals);
+        const averageRafInterval = average(rafIntervals);
 
         const snapshot: BenchmarkSnapshot = {
             suiteId: runLabel?.suiteId ?? null,
@@ -302,33 +301,33 @@ export class BenchmarkMonitor {
             frameCount: samples.length,
             averageFps: averageRafInterval > 0 ? 1000 / averageRafInterval : 0,
             low1PercentFps: this.calculateLow1PercentFps(rafIntervals),
-            averageFrameTime: this.average(samples.map((sample) => sample.frameTime)),
-            p95FrameTime: this.percentile(
+            averageFrameTime: average(samples.map((sample) => sample.frameTime)),
+            p95FrameTime: percentile(
                 samples.map((sample) => sample.frameTime),
                 95,
             ),
             averageRafInterval,
-            p95RafInterval: this.percentile(rafIntervals, 95),
-            averageSimulationTime: this.average(samples.map((sample) => sample.simulationTime)),
-            p95SimulationTime: this.percentile(
+            p95RafInterval: percentile(rafIntervals, 95),
+            averageSimulationTime: average(samples.map((sample) => sample.simulationTime)),
+            p95SimulationTime: percentile(
                 samples.map((sample) => sample.simulationTime),
                 95,
             ),
-            averageRenderTime: this.average(samples.map((sample) => sample.renderTime)),
-            p95RenderTime: this.percentile(
+            averageRenderTime: average(samples.map((sample) => sample.renderTime)),
+            p95RenderTime: percentile(
                 samples.map((sample) => sample.renderTime),
                 95,
             ),
             averageBrowserRenderTime:
-                this.browserRenderTimes.length === 0 ? null : this.average(this.browserRenderTimes),
+                this.browserRenderTimes.length === 0 ? null : average(this.browserRenderTimes),
             p95BrowserRenderTime:
                 this.browserRenderTimes.length === 0
                     ? null
-                    : this.percentile(this.browserRenderTimes, 95),
-            averageGpuTime: this.gpuTimes.length === 0 ? null : this.average(this.gpuTimes),
-            p95GpuTime: this.gpuTimes.length === 0 ? null : this.percentile(this.gpuTimes, 95),
+                    : percentile(this.browserRenderTimes, 95),
+            averageGpuTime: this.gpuTimes.length === 0 ? null : average(this.gpuTimes),
+            p95GpuTime: this.gpuTimes.length === 0 ? null : percentile(this.gpuTimes, 95),
             peakGpuTime: this.gpuTimes.length === 0 ? null : Math.max(...this.gpuTimes),
-            averageMainThreadUtilization: this.average(
+            averageMainThreadUtilization: average(
                 samples.map((sample) => sample.mainThreadUtilization),
             ),
             peakMainThreadUtilization:
@@ -347,9 +346,7 @@ export class BenchmarkMonitor {
         this.recordingRenderer = null;
         this.recordingStartedAt = 0;
         this.recordingSamples = [];
-        this.gpuTimes.length = 0;
         this.latestGpuTimeMs = null;
-        this.browserRenderTimes.length = 0;
         this.recordingMemoryStartMb = null;
         this.recordingMemoryPeakMb = null;
 
@@ -374,7 +371,7 @@ export class BenchmarkMonitor {
             }
         }
 
-        const averageLiveRafInterval = this.average(this.liveRafIntervals);
+        const averageLiveRafInterval = average(this.liveRafIntervals);
         const fps = averageLiveRafInterval > 0 ? 1000 / averageLiveRafInterval : 0;
 
         /*
@@ -449,42 +446,8 @@ export class BenchmarkMonitor {
         const count = Math.max(1, Math.ceil(sortedIntervals.length * 0.01));
 
         const slowestFrames = sortedIntervals.slice(0, count);
-        const averageSlowInterval = this.average(slowestFrames);
+        const averageSlowInterval = average(slowestFrames);
 
         return averageSlowInterval > 0 ? 1000 / averageSlowInterval : 0;
-    }
-
-    private average(values: readonly number[]): number {
-        if (values.length === 0) {
-            return 0;
-        }
-
-        let total = 0;
-
-        for (const value of values) {
-            total += value;
-        }
-
-        return total / values.length;
-    }
-
-    private percentile(values: readonly number[], percentile: number): number {
-        if (values.length === 0) {
-            return 0;
-        }
-
-        const sorted = [...values].sort((a, b) => a - b);
-
-        const index = (percentile / 100) * (sorted.length - 1);
-        const lower = Math.floor(index);
-        const upper = Math.ceil(index);
-
-        if (lower === upper) {
-            return sorted[lower];
-        }
-
-        const weight = index - lower;
-
-        return sorted[lower] + (sorted[upper] - sorted[lower]) * weight;
     }
 }

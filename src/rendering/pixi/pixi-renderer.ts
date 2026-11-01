@@ -386,35 +386,21 @@ export class PixiRenderer implements Renderer {
     private setupWebGpuGpuTiming(): void {
         const renderer = this.app.renderer;
 
-        if (
-            !(renderer instanceof WebGPURenderer) ||
-            !renderer.gpu.device.features.has('timestamp-query')
-        ) {
+        // Only our own device has timestamp queries, Pixi never requests them.
+        if (!(renderer instanceof WebGPURenderer) || !this.webGpuDevice) {
             return;
         }
 
-        const timer = new WebGpuGpuTimer(renderer.gpu.device, (gpuTimeMs) => {
+        const timer = new WebGpuGpuTimer(this.webGpuDevice, (gpuTimeMs) => {
             this.completedGpuTimes.push(gpuTimeMs);
         });
         const encoder = renderer.encoder;
         const beginRenderPass = encoder.beginRenderPass.bind(encoder);
 
-        // Pixi has no option for timestamp writes, and it reuses this descriptor between frames.
+        // Pixi has no option for timestamp writes.
         encoder.beginRenderPass = (gpuRenderTarget) => {
-            const timestampWrites = timer.nextPassTimestampWrites();
-
-            if (!timestampWrites) {
-                beginRenderPass(gpuRenderTarget);
-                return;
-            }
-
-            gpuRenderTarget.descriptor.timestampWrites = timestampWrites;
-
-            try {
-                beginRenderPass(gpuRenderTarget);
-            } finally {
-                delete gpuRenderTarget.descriptor.timestampWrites;
-            }
+            gpuRenderTarget.descriptor.timestampWrites = timer.nextPassTimestampWrites();
+            beginRenderPass(gpuRenderTarget);
         };
 
         this.webGpuTimer = timer;
@@ -1259,7 +1245,6 @@ export class PixiRenderer implements Renderer {
         }
 
         this.resetGpuTiming();
-        this.webGpuTimer?.destroy();
 
         this.webGl = null;
         this.webGlTimerExtension = null;

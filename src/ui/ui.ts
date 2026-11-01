@@ -1,4 +1,4 @@
-import type { BenchmarkSnapshot } from '@benchmarking/benchmark-monitor';
+import type { BenchmarkCurrentMetrics, BenchmarkSnapshot } from '@benchmarking/benchmark-monitor';
 import type { BenchmarkSuiteRunResult } from '@benchmarking/benchmark-suite';
 import type { BenchmarkSuiteConfig } from '@benchmarking/benchmark-suite-config';
 import type { RendererType } from '@rendering/renderer-factory';
@@ -380,21 +380,7 @@ export class BenchmarkUi {
         this.getEnvironment = getEnvironment;
     }
 
-    renderCurrent(
-        now: number,
-        renderer: RendererType,
-        metrics: {
-            fps: number;
-            frameTimeMs: number;
-            simulationTimeMs: number;
-            renderTimeMs: number;
-            browserRenderTimeMs: number | null;
-            gpuTimeMs: number | null;
-            mainThreadUtilization: number;
-            memoryMb: number | null;
-            frameCount: number;
-        },
-    ): void {
+    renderCurrent(now: number, renderer: RendererType, metrics: BenchmarkCurrentMetrics): void {
         if (now - this.lastUpdated < 250) {
             return;
         }
