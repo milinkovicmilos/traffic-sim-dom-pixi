@@ -4,7 +4,7 @@ import type { BenchmarkSuiteSetup } from './benchmark-suite';
 const STANDARD_BENCHMARK_SEED = 123456789;
 
 // V: vehicle count scaling on a fixed map.
-const VEHICLE_GROUP_MAP_SIZE = 25;
+const VEHICLE_GROUP_MAP_SIZE = 30;
 const VEHICLE_GROUP_COUNTS = [100, 250, 500, 1000, 2000, 4000, 8000, 16000];
 
 // M: map size scaling with a fixed vehicle count.
