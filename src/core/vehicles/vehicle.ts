@@ -1,6 +1,8 @@
+import type { Lane } from '@core/map/lane';
 import type { Path } from '@core/pathfinding/path';
 import type { Pathfinder } from '@core/pathfinding/pathfinder';
 import { PathLocation } from '@core/pathfinding/pathlocation';
+import type { IntersectionReservations } from '@core/traffic/intersection-reservations';
 import type { Movement } from '@core/traffic/movement';
 import type { TrafficLightSystem } from '@core/traffic/traffic-light-system';
 import { Vector2 } from '@shared/utils/math/vector2';
@@ -23,7 +25,10 @@ export class Vehicle {
     private readonly width: number;
     private readonly steeringSpeed = 8;
     private readonly steeringSampleDistance = 2;
+    private readonly exitBlockedPatience = 5;
+    private readonly decisionDistance: number;
     private readonly trafficLightSystem: TrafficLightSystem;
+    private readonly intersectionReservations: IntersectionReservations;
     private readonly vehicleDetector: VehicleDetector;
     private readonly pathfinder: Pathfinder;
     private readonly destinationGenerator: DestinationGenerator;
@@ -32,10 +37,10 @@ export class Vehicle {
     private travelledDistance = 0;
     private currentAngle = 0;
     private angleInitialized = false;
-    private stoppedForMovement: Movement | null = null;
+    private exitBlockedTime = 0;
 
-    // Once a vehicle has committed to crossing a movement,
-    // ordinary following/traffic-light logic must not stop it in the middle of the intersection.
+    // The reserved movement, held from before the stop line until the
+    // vehicle is clear of the intersection. A vehicle never passes a stop line without one.
     private clearingMovement: Movement | null = null;
 
     // Cache the current lane index so hot-path code does not
@@ -55,6 +60,7 @@ export class Vehicle {
         path: Path,
         config: VehicleConfig,
         trafficLightSystem: TrafficLightSystem,
+        intersectionReservations: IntersectionReservations,
         vehicleDetector: VehicleDetector,
         pathfinder: Pathfinder,
         destinationGenerator: DestinationGenerator,
@@ -68,7 +74,10 @@ export class Vehicle {
         this.minimumGap = config.minimumGap;
         this.length = config.length;
         this.width = config.width;
+        // From here on a vehicle could no longer stop at the line from full speed.
+        this.decisionDistance = (config.maxSpeed * config.maxSpeed) / (2 * config.braking);
         this.trafficLightSystem = trafficLightSystem;
+        this.intersectionReservations = intersectionReservations;
         this.vehicleDetector = vehicleDetector;
         this.pathfinder = pathfinder;
         this.destinationGenerator = destinationGenerator;
@@ -108,104 +117,58 @@ export class Vehicle {
         return this.travelledDistance;
     }
 
+    getCurrentLane(): Lane {
+        return this.path.getLanes()[this.currentLaneIndex];
+    }
+
+    isClearingIntersection(): boolean {
+        return this.clearingMovement !== null;
+    }
+
     update(deltaTime: number): void {
         if (deltaTime <= 0) {
             return;
         }
 
-        let remainingTime = deltaTime / 1000;
+        const deltaSeconds = deltaTime / 1000;
 
         this.updateCurrentLane();
         this.updateAngle(deltaTime);
 
-        while (remainingTime > MathUtils.epsilon) {
-            // A vehicle stopped at a prohibited movement remains
-            // stopped until that exact movement becomes allowed.
-            if (this.stoppedForMovement !== null) {
-                if (!this.trafficLightSystem.allowsMovement(this.stoppedForMovement)) {
-                    this.currentSpeed = 0;
-                    return;
-                }
+        const vehicleAhead = this.vehicleDetector.findVehicleAhead(this);
 
-                this.stoppedForMovement = null;
-            }
+        this.updateClearingMovement(vehicleAhead, deltaSeconds);
 
-            this.updateCurrentLane();
-            this.updateClearingMovement();
+        const stopLineDistance = this.getStopLineDistance();
+        const targetSpeed = this.getTargetSpeed(stopLineDistance, vehicleAhead);
+        const previousSpeed = this.currentSpeed;
 
-            // Query the detector once for this update.
-            // The result is reused for target-speed calculation and actual distance limiting.
-            const vehicleAhead =
-                this.clearingMovement === null ? this.vehicleDetector.findVehicleAhead(this) : null;
+        this.currentSpeed = this.moveTowardsSpeed(previousSpeed, targetSpeed, deltaSeconds);
 
-            const nextMovement = this.path.getNextMovement(this.travelledDistance);
+        let distanceLimit = this.path.getTotalLength() - this.travelledDistance;
 
-            const targetSpeed = this.getTargetSpeed(nextMovement, vehicleAhead);
+        if (stopLineDistance !== null) {
+            distanceLimit = Math.min(distanceLimit, stopLineDistance);
+        }
 
-            const previousSpeed = this.currentSpeed;
+        if (vehicleAhead !== null) {
+            distanceLimit = Math.min(distanceLimit, vehicleAhead.gap - this.minimumGap);
+        }
 
-            this.currentSpeed = this.moveTowardsSpeed(previousSpeed, targetSpeed, remainingTime);
-
-            const redLightStopDistance = this.getRedLightStopDistance(nextMovement);
-
-            const availableDistance = Math.max(
-                0,
-                this.path.getTotalLength() - this.travelledDistance,
-            );
-
-            const averageSpeed = (previousSpeed + this.currentSpeed) / 2;
-
-            let distanceToTravel = averageSpeed * remainingTime;
-
-            // Never cross a red-light stopping point.
-            if (redLightStopDistance !== null) {
-                distanceToTravel = Math.min(distanceToTravel, Math.max(0, redLightStopDistance));
-            }
-
-            // Maintain the following gap only while approaching
-            // an intersection, not while committed to clearing it.
-            if (vehicleAhead !== null) {
-                distanceToTravel = Math.min(
-                    distanceToTravel,
-                    Math.max(0, vehicleAhead.gap - this.minimumGap),
-                );
-            }
-
-            distanceToTravel = Math.min(distanceToTravel, availableDistance);
-
-            if (distanceToTravel <= MathUtils.epsilon) {
-                this.currentSpeed = 0;
-                this.tryStopAtRedLight(nextMovement);
-                return;
-            }
-
-            this.travelledDistance += distanceToTravel;
-            this.updateCurrentLane();
-            this.updateAngle(deltaTime);
-
-            // We reached a red-light stopping position.
-            if (
-                redLightStopDistance !== null &&
-                redLightStopDistance - distanceToTravel <= MathUtils.epsilon
-            ) {
-                this.tryStopAtRedLight(nextMovement);
-
-                if (this.stoppedForMovement !== null) {
-                    return;
-                }
-            }
-
-            // Reached destination.
-            if (this.travelledDistance >= this.path.getTotalLength() - MathUtils.epsilon) {
-                this.travelledDistance = this.path.getTotalLength();
-
-                this.changeDestination();
-                remainingTime = 0;
-                continue;
-            }
-
-            this.updateClearingMovement();
+        if (distanceLimit <= MathUtils.epsilon) {
+            this.currentSpeed = 0;
             return;
+        }
+
+        const averageSpeed = (previousSpeed + this.currentSpeed) / 2;
+
+        this.travelledDistance += Math.min(averageSpeed * deltaSeconds, distanceLimit);
+        this.updateCurrentLane();
+        this.updateAngle(deltaTime);
+
+        if (this.travelledDistance >= this.path.getTotalLength() - MathUtils.epsilon) {
+            this.travelledDistance = this.path.getTotalLength();
+            this.changeDestination();
         }
     }
 
@@ -241,39 +204,92 @@ export class Vehicle {
         this.targetAngle = this.getPathAngle();
     }
 
-    private updateClearingMovement(): void {
+    private updateClearingMovement(vehicleAhead: VehicleAhead | null, deltaSeconds: number): void {
         if (this.clearingMovement !== null) {
-            const nextMovement = this.path.getNextMovement(this.travelledDistance);
-
-            // Once the vehicle is no longer approaching the
-            // movement it committed to, the intersection has been cleared.
-            if (nextMovement === null || !this.clearingMovement.isEquivalentTo(nextMovement)) {
-                this.clearingMovement = null;
-            }
-
+            this.updateHeldReservation(this.clearingMovement);
             return;
         }
 
         const nextMovement = this.path.getNextMovement(this.travelledDistance);
 
-        if (nextMovement === null) {
+        if (nextMovement === null || !this.canEnterIntersection(nextMovement, vehicleAhead)) {
             return;
         }
 
-        const movementDistance = this.path.getMovementDistance(nextMovement);
-
-        if (movementDistance === null) {
+        if (!this.hasRoomToExit(nextMovement)) {
+            this.waitForExitRoom(deltaSeconds);
             return;
         }
 
-        /*
-         * Once we reach the practical stop-line position,
-         * commit to crossing the movement.
-         */
-        const commitDistance = movementDistance - this.stoppingDistance;
+        this.exitBlockedTime = 0;
 
-        if (this.travelledDistance >= commitDistance - MathUtils.epsilon) {
+        if (this.intersectionReservations.tryReserve(nextMovement)) {
             this.clearingMovement = nextMovement;
+        }
+    }
+
+    // Full lanes can wait on each other in a loop forever, so a blocked vehicle takes another route.
+    private waitForExitRoom(deltaSeconds: number): void {
+        this.exitBlockedTime += deltaSeconds;
+
+        if (this.exitBlockedTime < this.exitBlockedPatience) {
+            return;
+        }
+
+        this.exitBlockedTime = 0;
+        this.path = this.findNewPath(this.path.getPathLocationAtDistance(this.travelledDistance));
+        this.travelledDistance = 0;
+        this.currentLaneIndex = 0;
+    }
+
+    private updateHeldReservation(movement: Movement): void {
+        const movementDistance = this.path.getMovementDistance(movement) ?? 0;
+        const hasCleared = this.travelledDistance >= movementDistance + this.stoppingDistance;
+
+        // The light can still change while approaching the line, but not once past it.
+        const stopLine = movementDistance - this.stoppingDistance;
+        const lostGreen =
+            this.travelledDistance <= stopLine + MathUtils.epsilon &&
+            !this.trafficLightSystem.allowsMovement(movement);
+
+        if (hasCleared || lostGreen) {
+            this.releaseClearingMovement();
+        }
+    }
+
+    private canEnterIntersection(movement: Movement, vehicleAhead: VehicleAhead | null): boolean {
+        const stopLine = (this.path.getMovementDistance(movement) ?? 0) - this.stoppingDistance;
+
+        if (stopLine - this.travelledDistance > this.decisionDistance) {
+            return false;
+        }
+
+        // Only the first vehicle in the lane may enter, or it could block the one in front.
+        const isQueued =
+            vehicleAhead !== null &&
+            !vehicleAhead.vehicle.isClearingIntersection() &&
+            vehicleAhead.vehicle.getCurrentLane() === this.getCurrentLane();
+
+        return !isQueued && this.trafficLightSystem.allowsMovement(movement);
+    }
+
+    // Never enter unless there is room beyond the intersection, or the vehicle could stop inside it.
+    private hasRoomToExit(movement: Movement): boolean {
+        const exitLane = movement.getOutgoingLane();
+        const queueStart =
+            this.vehicleDetector.findQueueStart(exitLane) ??
+            exitLane.getLength() - this.stoppingDistance;
+        const vehiclesToFit = this.intersectionReservations.countEntering(exitLane) + 1;
+
+        return (
+            queueStart - vehiclesToFit * (this.length + this.minimumGap) >= this.stoppingDistance
+        );
+    }
+
+    private releaseClearingMovement(): void {
+        if (this.clearingMovement !== null) {
+            this.intersectionReservations.release(this.clearingMovement);
+            this.clearingMovement = null;
         }
     }
 
@@ -361,18 +377,17 @@ export class Vehicle {
     }
 
     private getTargetSpeed(
-        nextMovement: Movement | null,
+        stopLineDistance: number | null,
         vehicleAhead: VehicleAhead | null,
     ): number {
-        if (this.stoppedForMovement !== null) {
-            return 0;
+        let targetSpeed = this.maxSpeed;
+
+        if (stopLineDistance !== null) {
+            // Maximum speed that still allows stopping at the line.
+            targetSpeed = Math.sqrt(2 * this.braking * Math.max(0, stopLineDistance));
         }
 
-        let targetSpeed = this.getTrafficLightTargetSpeed(nextMovement);
-
-        // Do not allow ordinary following logic to stop a vehicle
-        // once it has committed to clearing an intersection.
-        if (vehicleAhead !== null && this.clearingMovement === null) {
+        if (vehicleAhead !== null) {
             targetSpeed = Math.min(
                 targetSpeed,
                 this.getFollowingTargetSpeed(
@@ -385,60 +400,11 @@ export class Vehicle {
         return MathUtils.clamp(targetSpeed, 0, this.maxSpeed);
     }
 
-    private getTrafficLightTargetSpeed(nextMovement: Movement | null): number {
-        // Already committed to this movement.
-        if (this.clearingMovement !== null) {
-            return this.maxSpeed;
-        }
+    // Distance to the next stop line this vehicle has no reservation for.
+    private getStopLineDistance(): number | null {
+        const nextMovement = this.path.getNextMovement(this.travelledDistance);
 
-        if (nextMovement === null) {
-            return this.maxSpeed;
-        }
-
-        if (this.trafficLightSystem.allowsMovement(nextMovement)) {
-            return this.maxSpeed;
-        }
-
-        const distanceToMovement = this.path.getDistanceToMovement(
-            this.travelledDistance,
-            nextMovement,
-        );
-
-        if (distanceToMovement === null) {
-            return this.maxSpeed;
-        }
-
-        const distanceToStop = distanceToMovement - this.stoppingDistance;
-
-        if (distanceToStop <= MathUtils.epsilon) {
-            return 0;
-        }
-
-        if (this.braking <= MathUtils.epsilon) {
-            return this.maxSpeed;
-        }
-
-        // Maximum speed that still allows stopping before the stop line.
-        const safeSpeed = Math.sqrt(2 * this.braking * distanceToStop);
-
-        return Math.min(this.maxSpeed, Math.max(0, safeSpeed));
-    }
-
-    private getRedLightStopDistance(nextMovement: Movement | null): number | null {
-        if (this.stoppedForMovement !== null) {
-            return 0;
-        }
-
-        // Do not stop again after committing to the movement.
-        if (this.clearingMovement !== null) {
-            return null;
-        }
-
-        if (nextMovement === null) {
-            return null;
-        }
-
-        if (this.trafficLightSystem.allowsMovement(nextMovement)) {
+        if (nextMovement === null || nextMovement === this.clearingMovement) {
             return null;
         }
 
@@ -447,49 +413,7 @@ export class Vehicle {
             nextMovement,
         );
 
-        if (distanceToMovement === null) {
-            return null;
-        }
-
-        return Math.max(0, distanceToMovement - this.stoppingDistance);
-    }
-
-    private tryStopAtRedLight(nextMovement: Movement | null): void {
-        if (this.clearingMovement !== null) {
-            return;
-        }
-
-        if (nextMovement === null) {
-            return;
-        }
-
-        if (this.trafficLightSystem.allowsMovement(nextMovement)) {
-            return;
-        }
-
-        const distanceToMovement = this.path.getDistanceToMovement(
-            this.travelledDistance,
-            nextMovement,
-        );
-
-        if (distanceToMovement === null) {
-            return;
-        }
-
-        const distanceToStop = distanceToMovement - this.stoppingDistance;
-
-        if (distanceToStop > MathUtils.epsilon) {
-            return;
-        }
-
-        const movementDistance = this.path.getMovementDistance(nextMovement);
-
-        if (movementDistance !== null) {
-            this.travelledDistance = Math.max(0, movementDistance - this.stoppingDistance);
-        }
-
-        this.currentSpeed = 0;
-        this.stoppedForMovement = nextMovement;
+        return distanceToMovement === null ? null : distanceToMovement - this.stoppingDistance;
     }
 
     private getFollowingTargetSpeed(gap: number, vehicleAheadSpeed: number): number {
@@ -535,11 +459,10 @@ export class Vehicle {
         const start = this.path.getEndLocation();
         const newPath = this.findNewPath(start);
 
+        this.releaseClearingMovement();
         this.path = newPath;
         this.travelledDistance = 0;
         this.currentSpeed = 0;
-        this.stoppedForMovement = null;
-        this.clearingMovement = null;
         this.currentLaneIndex = 0;
         this.targetAngle = this.getPathAngle();
         this.currentAngle = this.targetAngle;

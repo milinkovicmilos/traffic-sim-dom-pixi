@@ -82,7 +82,7 @@ export class Lane {
      */
     getPosition(distance: number): Vector2 {
         const laneLength = this.getLength();
-        const clampedDistance = MathUtils.clamp(0, distance, laneLength);
+        const clampedDistance = MathUtils.clamp(distance, 0, laneLength);
         const start = this.getStartPosition();
         const end = this.getEndPosition();
         const direction = start.unitVectorTo(end);

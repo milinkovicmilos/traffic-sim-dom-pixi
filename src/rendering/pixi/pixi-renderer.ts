@@ -10,12 +10,15 @@ import {
     Text,
     Texture,
     WebGLRenderer,
+    WebGPURenderer,
 } from 'pixi.js';
 
 import type { Road } from '@core/map/road';
 import type { RoadMap } from '@core/map/road-map';
 import type { VehicleState } from '@core/vehicles/vehicle-state';
 import type { Renderer, RenderState, TrafficLightRenderState } from '@rendering/renderer';
+import { getWebGlGpuName, getWebGpuGpuName } from '@shared/utils/gpu/gpu-name';
+import { requestTimestampGpu, WebGpuGpuTimer } from './webgpu-gpu-timer';
 
 export interface PixiRendererOptions {
     container: HTMLElement;
@@ -95,11 +98,9 @@ const STATIC_CHUNK_CULL_MARGIN = 300;
 const ROAD_EXTENDED_MARGIN = 500;
 
 /*
- * WebGL only.
- *
  * We sample one out of every five frames. GPU timer queries are
- * asynchronous, so consumeGpuTime() returns the latest result
- * that has become available.
+ * asynchronous, so consumeGpuTime() returns the oldest result
+ * that has become available and not been consumed yet.
  */
 const GPU_SAMPLE_INTERVAL = 5;
 
@@ -128,8 +129,10 @@ export class PixiRenderer implements Renderer {
     private readonly webGlPendingQueries: WebGLQuery[] = [];
     private gpuTimingFrameCounter = 0;
     private gpuTimingSampleThisFrame = false;
-    private latestGpuTimeMs: number | null = null;
-    private gpuTimeAvailable = false;
+    private readonly completedGpuTimes: number[] = [];
+    private webGpuDevice: GPUDevice | null = null;
+    private webGpuTimer: WebGpuGpuTimer | null = null;
+    private gpuName: string | null = null;
 
     private vehicleTexture!: Texture;
     private trafficLightHousingTexture!: Texture;
@@ -187,7 +190,12 @@ export class PixiRenderer implements Renderer {
 
         this.app = new Application();
 
+        const timestampGpu = this.preference === 'webgpu' ? await requestTimestampGpu() : null;
+
+        this.webGpuDevice = timestampGpu?.device ?? null;
+
         await this.app.init({
+            ...(timestampGpu ? { webgpu: { gpu: timestampGpu } } : {}),
             width: 1,
             height: 1,
             resolution,
@@ -251,6 +259,8 @@ export class PixiRenderer implements Renderer {
 
         this.initialized = true;
         this.setupWebGlGpuTiming();
+        this.setupWebGpuGpuTiming();
+        this.gpuName = await this.readGpuName();
         this.resizeViewport();
     }
 
@@ -277,15 +287,16 @@ export class PixiRenderer implements Renderer {
     // These methods are intentionally not part of Renderer.
     // main.ts can detect them through its optional GPU-timing interface.
     beginGpuTiming(): void {
-        if (this.preference !== 'webgl') {
-            return;
-        }
-
         this.gpuTimingFrameCounter += 1;
 
         this.gpuTimingSampleThisFrame = this.gpuTimingFrameCounter % GPU_SAMPLE_INTERVAL === 0;
 
         if (!this.gpuTimingSampleThisFrame) {
+            return;
+        }
+
+        if (this.webGpuTimer) {
+            this.webGpuTimer.begin();
             return;
         }
 
@@ -305,7 +316,12 @@ export class PixiRenderer implements Renderer {
     }
 
     endGpuTiming(): void {
-        if (this.preference !== 'webgl' || !this.gpuTimingSampleThisFrame) {
+        if (!this.gpuTimingSampleThisFrame) {
+            return;
+        }
+
+        if (this.webGpuTimer) {
+            this.webGpuTimer.end();
             return;
         }
 
@@ -321,27 +337,36 @@ export class PixiRenderer implements Renderer {
     }
 
     consumeGpuTime(): number | null {
-        if (this.preference !== 'webgl') {
-            return null;
-        }
-
         this.pollWebGlTiming();
 
-        if (!this.gpuTimeAvailable) {
-            return null;
-        }
+        return this.completedGpuTimes.shift() ?? null;
+    }
 
-        this.gpuTimeAvailable = false;
-
-        return this.latestGpuTimeMs;
+    getGpuName(): string | null {
+        return this.gpuName;
     }
 
     resetGpuTiming(): void {
         this.resetWebGlTiming();
+        this.webGpuTimer?.reset();
         this.gpuTimingFrameCounter = 0;
         this.gpuTimingSampleThisFrame = false;
-        this.latestGpuTimeMs = null;
-        this.gpuTimeAvailable = false;
+        this.completedGpuTimes.length = 0;
+    }
+
+    // Pixi may fall back to WebGL when WebGPU fails, so check the actual renderer.
+    private async readGpuName(): Promise<string | null> {
+        const renderer = this.app.renderer;
+
+        if (renderer instanceof WebGPURenderer) {
+            return getWebGpuGpuName(renderer.gpu.adapter);
+        }
+
+        if (renderer instanceof WebGLRenderer) {
+            return getWebGlGpuName(renderer.gl);
+        }
+
+        return null;
     }
 
     private setupWebGlGpuTiming(): void {
@@ -358,17 +383,42 @@ export class PixiRenderer implements Renderer {
         ) as WebGLTimerExtension | null;
     }
 
+    private setupWebGpuGpuTiming(): void {
+        const renderer = this.app.renderer;
+
+        // Only our own device has timestamp queries, Pixi never requests them.
+        if (!(renderer instanceof WebGPURenderer) || !this.webGpuDevice) {
+            return;
+        }
+
+        const timer = new WebGpuGpuTimer(this.webGpuDevice, (gpuTimeMs) => {
+            this.completedGpuTimes.push(gpuTimeMs);
+        });
+        const encoder = renderer.encoder;
+        const beginRenderPass = encoder.beginRenderPass.bind(encoder);
+
+        // Pixi has no option for timestamp writes.
+        encoder.beginRenderPass = (gpuRenderTarget) => {
+            gpuRenderTarget.descriptor.timestampWrites = timer.nextPassTimestampWrites();
+            beginRenderPass(gpuRenderTarget);
+        };
+
+        this.webGpuTimer = timer;
+    }
+
     private pollWebGlTiming(): void {
         if (!this.webGl || !this.webGlTimerExtension) {
             return;
         }
 
+        // Reading the flag clears it, so queries that overlapped the disjoint event must go now.
         if (this.webGl.getParameter(this.webGlTimerExtension.GPU_DISJOINT_EXT)) {
+            this.resetWebGlTiming();
             return;
         }
 
-        for (let i = this.webGlPendingQueries.length - 1; i >= 0; i -= 1) {
-            const query = this.webGlPendingQueries[i];
+        while (this.webGlPendingQueries.length > 0) {
+            const query = this.webGlPendingQueries[0];
 
             const available = this.webGl.getQueryParameter(
                 query,
@@ -376,7 +426,7 @@ export class PixiRenderer implements Renderer {
             ) as boolean;
 
             if (!available) {
-                continue;
+                break;
             }
 
             const nanoseconds = this.webGl.getQueryParameter(
@@ -385,10 +435,9 @@ export class PixiRenderer implements Renderer {
             ) as number;
 
             this.webGl.deleteQuery(query);
-            this.webGlPendingQueries.splice(i, 1);
+            this.webGlPendingQueries.shift();
 
-            this.latestGpuTimeMs = nanoseconds / 1_000_000;
-            this.gpuTimeAvailable = true;
+            this.completedGpuTimes.push(nanoseconds / 1_000_000);
         }
     }
 
@@ -1199,6 +1248,8 @@ export class PixiRenderer implements Renderer {
 
         this.webGl = null;
         this.webGlTimerExtension = null;
+        this.webGpuTimer = null;
+        this.gpuName = null;
 
         if (this.app) {
             this.app.destroy(true, {
@@ -1206,6 +1257,10 @@ export class PixiRenderer implements Renderer {
                 texture: false,
             });
         }
+
+        // Pixi leaves a device it was handed alone, so it is ours to destroy.
+        this.webGpuDevice?.destroy();
+        this.webGpuDevice = null;
 
         this.container.replaceChildren();
 

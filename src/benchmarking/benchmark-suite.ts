@@ -1,6 +1,7 @@
 import type { RendererType } from '@rendering/renderer-factory';
 import type { BenchmarkMonitor, BenchmarkSnapshot } from './benchmark-monitor';
 import type { BenchmarkSuiteConfig } from './benchmark-suite-config';
+import type { SimulationTraceInfo } from './simulation-trace';
 
 export interface BenchmarkSuiteSetup {
     id: string;
@@ -17,6 +18,7 @@ export interface BenchmarkSuiteRunResult {
     renderer: RendererType;
     status: BenchmarkSuiteRunStatus;
     snapshot: BenchmarkSnapshot | null;
+    trace?: SimulationTraceInfo;
     reason: string | null;
 }
 
@@ -29,15 +31,18 @@ export interface BenchmarkSuiteProgress {
 }
 
 export interface BenchmarkSuiteRunnerCallbacks {
+    // Resolves to null when the renderer is unavailable.
     prepareRun: (
         setup: BenchmarkSuiteSetup,
         renderer: RendererType,
         seed: number,
-    ) => Promise<boolean>;
+        timelineMs: number,
+    ) => Promise<SimulationTraceInfo | null>;
     getVehicleCount: () => number;
 }
 
 export interface BenchmarkSuiteRunOptions {
+    runIndex: number;
     onProgress?: (progress: BenchmarkSuiteProgress) => void;
 }
 
@@ -57,7 +62,7 @@ export class BenchmarkSuiteRunner {
 
     async run(
         config: BenchmarkSuiteConfig,
-        options: BenchmarkSuiteRunOptions = {},
+        options: BenchmarkSuiteRunOptions,
     ): Promise<BenchmarkSuiteRunResult[]> {
         if (this.running) {
             throw new Error('A benchmark suite is already running.');
@@ -67,6 +72,7 @@ export class BenchmarkSuiteRunner {
         this.running = true;
 
         const results: BenchmarkSuiteRunResult[] = [];
+        const runLabel = { suiteId: config.id, runIndex: options.runIndex };
         const totalRuns = config.setups.length * config.renderers.length;
 
         let completedRuns = 0;
@@ -82,10 +88,15 @@ export class BenchmarkSuiteRunner {
                         phase: 'reset',
                     });
 
-                    let prepared = false;
+                    let trace: SimulationTraceInfo | null = null;
 
                     try {
-                        prepared = await this.callbacks.prepareRun(setup, renderer, config.seed);
+                        trace = await this.callbacks.prepareRun(
+                            setup,
+                            renderer,
+                            config.seed,
+                            config.warmupMs + config.durationMs,
+                        );
                     } catch (error) {
                         results.push({
                             setup,
@@ -99,7 +110,7 @@ export class BenchmarkSuiteRunner {
                         continue;
                     }
 
-                    if (!prepared) {
+                    if (!trace) {
                         results.push({
                             setup,
                             renderer,
@@ -142,13 +153,20 @@ export class BenchmarkSuiteRunner {
                             this.callbacks.getVehicleCount(),
                             setup.rows,
                             setup.columns,
+                            runLabel,
                         );
 
                         results.push({
                             setup,
                             renderer,
                             status: 'complete',
-                            snapshot,
+                            // A replayed frame runs no simulation, so its cost comes from the trace.
+                            snapshot: {
+                                ...snapshot,
+                                averageSimulationTime: trace.averageStepTime,
+                                p95SimulationTime: trace.p95StepTime,
+                            },
+                            trace,
                             reason: null,
                         });
                     } catch (error) {
@@ -224,7 +242,7 @@ export class BenchmarkSuiteRunner {
     }
 }
 
-function wait(durationMs: number): Promise<void> {
+export function wait(durationMs: number): Promise<void> {
     return new Promise((resolve) => {
         window.setTimeout(resolve, durationMs);
     });

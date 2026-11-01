@@ -12,6 +12,8 @@ import {
     type BenchmarkSuiteConfig,
 } from '@benchmarking/benchmark-suite-config';
 import type { RendererType } from '@rendering/renderer-factory';
+import { probeWebGlGpuName } from '@shared/utils/gpu/gpu-name';
+import { SimulationTrace } from '@benchmarking/simulation-trace';
 
 import {
     renderApp,
@@ -72,6 +74,7 @@ function createSimulationConfig(): SimulationConfig {
 }
 
 let customBenchmarkSuiteConfig: BenchmarkSuiteConfig = {
+    id: 'custom',
     seed: generateRandomSeed(),
     warmupMs: 3000,
     durationMs: 10000,
@@ -107,7 +110,11 @@ for (const host of Object.values(rendererHosts)) {
     host.style.display = 'none';
 }
 
-const benchmarkMonitor = new BenchmarkMonitor();
+const benchmarkMonitor = new BenchmarkMonitor(() => ({
+    viewportWidth: elements.simulationViewport.clientWidth,
+    viewportHeight: elements.simulationViewport.clientHeight,
+    gpuName: getActiveGpuRenderer().getGpuName?.() ?? getProbedGpuName(),
+}));
 const benchmarkUi = new BenchmarkUi(elements, () => benchmarkMonitor.getEnvironment());
 
 let simulation = new Simulation(createSimulationConfig());
@@ -116,18 +123,57 @@ let benchmarkSuiteResults: BenchmarkSuiteRunResult[] = [];
 let benchmarkSuiteRunning = false;
 let rendererOperationInProgress = false;
 let restartInProgress = false;
+let refreshRateMeasurementInProgress = false;
 let previousTime = performance.now();
+let previousRafTime: number | null = null;
+let suiteRunCount = 0;
+let probedGpuName: string | null | undefined;
+let browserRenderStart: number | null = null;
+// Kept between the renderers of one setup, so all of them replay the same states.
+let suiteTrace: { setupId: string; trace: SimulationTrace } | null = null;
+let generatingTrace = false;
+let replayStartTime: number | null = null;
+
+const REFRESH_RATE_MEASUREMENT_MS = 2000;
+const HOST_ID_STORAGE_KEY = 'benchmark-host-id';
+
+/*
+ * The browser runs style, layout and paint in the same task as the rAF callbacks,
+ * so a message posted from the callback arrives once that main-thread work is done.
+ * If a later frame runs first, its end overwrites the start time and the message
+ * measures that frame instead, so the time is never attributed across two frames.
+ */
+const browserRenderChannel = new MessageChannel();
+
+browserRenderChannel.port1.onmessage = () => {
+    if (browserRenderStart === null) {
+        return;
+    }
+
+    benchmarkMonitor.recordBrowserRenderTime(performance.now() - browserRenderStart);
+    browserRenderStart = null;
+};
 
 interface RendererWithGpuTiming {
     beginGpuTiming?(): void;
     endGpuTiming?(): void;
     consumeGpuTime?(): number | null;
     resetGpuTiming?(): void;
+    getGpuName?(): string | null;
+}
+
+// DOM has no GPU context of its own, so probe once with a throwaway WebGL canvas.
+function getProbedGpuName(): string | null {
+    if (probedGpuName === undefined) {
+        probedGpuName = probeWebGlGpuName();
+    }
+
+    return probedGpuName;
 }
 
 import { createRenderer, type RendererOptions } from '@rendering/renderer-factory';
 import { createRenderState } from '@rendering/render-state';
-import type { Renderer } from '@rendering/renderer';
+import type { Renderer, RenderState } from '@rendering/renderer';
 
 const rendererOptions: RendererOptions = {
     dom: {
@@ -249,10 +295,6 @@ async function initializeRenderer(type: RendererType): Promise<boolean> {
     }
 }
 
-function renderCurrentState(): void {
-    activeRenderer.render(createRenderState(simulation));
-}
-
 async function switchRendererInternal(type: RendererType): Promise<boolean> {
     if (type === activeRendererType) {
         showRendererHost(activeRendererType);
@@ -342,6 +384,13 @@ async function rebuildSimulation(
     restartInProgress = true;
 
     try {
+        // Throws if the vehicles don't fit, so the current scenario only changes afterwards.
+        simulation = new Simulation({
+            ...createSimulationConfig(),
+            grid: { ...gridConfig, rows: nextRows, columns: nextColumns },
+            vehicles: { ...vehiclesConfig, count: nextVehicleCount },
+        });
+
         gridConfig.rows = nextRows;
         gridConfig.columns = nextColumns;
         vehiclesConfig.count = nextVehicleCount;
@@ -351,8 +400,6 @@ async function rebuildSimulation(
             elements.columnsInput.value = String(nextColumns);
             elements.vehiclesInput.value = String(nextVehicleCount);
         }
-
-        simulation = new Simulation(createSimulationConfig());
 
         const rendererType = activeRendererType;
 
@@ -411,6 +458,7 @@ async function restartSimulation(): Promise<void> {
         elements.benchmarkStatus.textContent = 'Live';
     } catch (error) {
         console.error('Could not restart simulation.', error);
+        window.alert(error instanceof Error ? error.message : String(error));
 
         elements.rowsInput.value = String(gridConfig.rows);
         elements.columnsInput.value = String(gridConfig.columns);
@@ -428,6 +476,7 @@ function setBenchmarkSuiteControlsDisabled(disabled: boolean): void {
     elements.benchmarkConfigure.disabled = disabled;
     elements.benchmarkSuiteRun.disabled = disabled;
     elements.benchmarkRecord.disabled = disabled;
+    elements.benchmarkHostInput.disabled = disabled;
     elements.rendererSelect.disabled = disabled;
     setScenarioControlsDisabled(disabled);
     elements.suiteAddSetup.disabled = disabled;
@@ -491,6 +540,7 @@ function readBenchmarkSuiteConfigFromUi(): BenchmarkSuiteConfig {
     }
 
     return {
+        id: 'custom',
         seed: currentSimulationSeed,
         warmupMs,
         durationMs,
@@ -525,7 +575,7 @@ function closeBenchmarkResultsModal(): void {
 }
 
 const benchmarkSuiteRunner = new BenchmarkSuiteRunner(benchmarkMonitor, {
-    prepareRun: async (setup, renderer, seed) => {
+    prepareRun: async (setup, renderer, seed, timelineMs) => {
         currentSimulationSeed = seed;
 
         await rebuildSimulation(setup.rows, setup.columns, setup.vehicleCount, {
@@ -535,14 +585,118 @@ const benchmarkSuiteRunner = new BenchmarkSuiteRunner(benchmarkMonitor, {
 
         const switched = await switchRendererInternal(renderer);
 
-        if (switched) {
-            getActiveGpuRenderer().resetGpuTiming?.();
+        if (!switched) {
+            return null;
         }
 
-        return switched;
+        const trace =
+            suiteTrace?.setupId === setup.id
+                ? suiteTrace.trace
+                : await generateSuiteTrace(setup, timelineMs);
+
+        getActiveGpuRenderer().resetGpuTiming?.();
+        replayStartTime = null;
+
+        return trace.getInfo();
     },
     getVehicleCount: () => simulation.getVehicles().length,
 });
+
+async function generateSuiteTrace(
+    setup: BenchmarkSuiteSetup,
+    timelineMs: number,
+): Promise<SimulationTrace> {
+    // Release the previous setup's states first, they can take hundreds of megabytes.
+    suiteTrace = null;
+    generatingTrace = true;
+    elements.benchmarkStatus.textContent = `Generating states • ${setup.name}`;
+
+    try {
+        const trace = await SimulationTrace.generate(
+            new Simulation(createSimulationConfig()),
+            timelineMs,
+        );
+
+        suiteTrace = { setupId: setup.id, trace };
+
+        return trace;
+    } finally {
+        generatingTrace = false;
+    }
+}
+
+function loadHostId(): void {
+    try {
+        const storedHostId = localStorage.getItem(HOST_ID_STORAGE_KEY);
+
+        if (storedHostId !== null) {
+            elements.benchmarkHostInput.value = storedHostId;
+        }
+    } catch {
+        // Storage can be unavailable (private mode, blocked site data).
+    }
+}
+
+function saveHostId(): void {
+    try {
+        localStorage.setItem(HOST_ID_STORAGE_KEY, elements.benchmarkHostInput.value);
+    } catch {
+        // Storage can be unavailable (private mode, blocked site data).
+    }
+}
+
+function getBrowserInfo(): { name: string; version: string } {
+    const userAgent = navigator.userAgent;
+
+    // Order matters: Edge and Opera also contain "Chrome/", and Chrome also contains "Safari/".
+    const patterns: [string, RegExp][] = [
+        ['Edge', /Edg\/(\d+)/],
+        ['Opera', /OPR\/(\d+)/],
+        ['Firefox', /Firefox\/(\d+)/],
+        ['Chrome', /Chrome\/(\d+)/],
+        ['Safari', /Version\/(\d+).*Safari\//],
+    ];
+
+    for (const [name, pattern] of patterns) {
+        const match = pattern.exec(userAgent);
+
+        if (match) {
+            return { name, version: match[1] };
+        }
+    }
+
+    return { name: 'Unknown', version: '0' };
+}
+
+function downloadBenchmarkSuiteResults(
+    results: BenchmarkSuiteRunResult[],
+    hostId: number,
+    runIndex: number,
+): void {
+    const browser = getBrowserInfo();
+    const fileName = `H${hostId}_${browser.name}_${browser.version}_run${runIndex}.json`;
+    const blob = new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+
+    link.href = url;
+    link.download = fileName;
+    link.click();
+
+    // Revoking synchronously can cancel the download in some browsers.
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function measureRefreshRate(): Promise<void> {
+    // frame() skips simulation and rendering while this flag is set.
+    refreshRateMeasurementInProgress = true;
+
+    try {
+        await benchmarkMonitor.measureRefreshRate(REFRESH_RATE_MEASUREMENT_MS);
+    } finally {
+        refreshRateMeasurementInProgress = false;
+    }
+}
 
 async function startBenchmarkSuite(config: BenchmarkSuiteConfig): Promise<void> {
     if (
@@ -560,6 +714,19 @@ async function startBenchmarkSuite(config: BenchmarkSuiteConfig): Promise<void> 
     const originalRendererType = activeRendererType;
     const originalSeed = currentSimulationSeed;
 
+    let hostId: number;
+
+    try {
+        hostId = parseIntegerValue(elements.benchmarkHostInput, 'Host', 1);
+    } catch (error) {
+        window.alert(error instanceof Error ? error.message : String(error));
+        return;
+    }
+
+    suiteRunCount += 1;
+
+    const runIndex = suiteRunCount;
+
     benchmarkSuiteRunning = true;
     setBenchmarkSuiteControlsDisabled(true);
 
@@ -570,9 +737,14 @@ async function startBenchmarkSuite(config: BenchmarkSuiteConfig): Promise<void> 
     const totalRuns = getBenchmarkSuiteTotalRuns(config);
 
     try {
+        elements.benchmarkStatus.textContent = 'Measuring refresh rate…';
+
+        await measureRefreshRate();
+
         elements.benchmarkStatus.textContent = `Suite starting • 1/${totalRuns}`;
 
         benchmarkSuiteResults = await benchmarkSuiteRunner.run(config, {
+            runIndex,
             onProgress: ({
                 completedRuns,
                 totalRuns: progressTotalRuns,
@@ -596,6 +768,8 @@ async function startBenchmarkSuite(config: BenchmarkSuiteConfig): Promise<void> 
         console.error('Benchmark suite failed.', error);
     } finally {
         elements.benchmarkStatus.textContent = 'Restoring scenario…';
+
+        suiteTrace = null;
 
         try {
             currentSimulationSeed = originalSeed;
@@ -623,6 +797,10 @@ async function startBenchmarkSuite(config: BenchmarkSuiteConfig): Promise<void> 
 
         benchmarkUi.renderResults(benchmarkSuiteResults);
         openModal(elements.benchmarkResultsModal);
+
+        if (benchmarkSuiteResults.length > 0) {
+            downloadBenchmarkSuiteResults(benchmarkSuiteResults, hostId, runIndex);
+        }
     }
 }
 
@@ -657,6 +835,7 @@ elements.benchmarkRecord.addEventListener('click', () => {
 
         elements.benchmarkStatus.textContent = 'Complete';
         elements.benchmarkRecord.textContent = 'Record Snapshot';
+        elements.benchmarkHostInput.disabled = false;
         elements.rendererSelect.disabled = false;
         setScenarioControlsDisabled(false);
         elements.benchmarkSuiteRun.disabled = false;
@@ -672,11 +851,14 @@ elements.benchmarkRecord.addEventListener('click', () => {
 
     elements.benchmarkStatus.textContent = 'Recording…';
     elements.benchmarkRecord.textContent = 'Stop Recording';
+    elements.benchmarkHostInput.disabled = true;
     elements.rendererSelect.disabled = true;
     setScenarioControlsDisabled(true);
     elements.benchmarkSuiteRun.disabled = true;
     elements.benchmarkConfigure.disabled = true;
 });
+
+elements.benchmarkHostInput.addEventListener('change', saveHostId);
 
 elements.benchmarkConfigure.addEventListener('click', openBenchmarkConfigModal);
 
@@ -796,6 +978,8 @@ for (const backdrop of document.querySelectorAll<HTMLElement>('[data-close-modal
 }
 
 async function start(): Promise<void> {
+    loadHostId();
+
     webgpuAvailable = await isWebGPUAvailable();
     updateWebGPUOption();
 
@@ -819,8 +1003,30 @@ async function start(): Promise<void> {
     requestAnimationFrame(frame);
 }
 
+function getReplayState(currentTime: number): RenderState | null {
+    if (!suiteTrace) {
+        return null;
+    }
+
+    replayStartTime ??= currentTime;
+
+    return suiteTrace.trace.getRenderState(currentTime - replayStartTime, simulation.getRoadMap());
+}
+
 function frame(currentTime: number): void {
-    if (restartInProgress || rendererOperationInProgress) {
+    // Real display interval: difference between consecutive rAF timestamps,
+    // unlike frameTime, which only covers the app's own work.
+    const rafInterval = previousRafTime === null ? null : currentTime - previousRafTime;
+
+    previousRafTime = currentTime;
+    browserRenderStart = null;
+
+    if (
+        restartInProgress ||
+        rendererOperationInProgress ||
+        refreshRateMeasurementInProgress ||
+        generatingTrace
+    ) {
         previousTime = currentTime;
         requestAnimationFrame(frame);
         return;
@@ -832,9 +1038,14 @@ function frame(currentTime: number): void {
 
         previousTime = currentTime;
 
+        // Part of frameTime, but neither simulation nor rendering work.
+        const replayState = getReplayState(currentTime);
+
         const simulationStart = performance.now();
 
-        simulation.update(deltaTime);
+        if (!replayState) {
+            simulation.update(deltaTime);
+        }
 
         const simulationTime = performance.now() - simulationStart;
 
@@ -844,7 +1055,7 @@ function frame(currentTime: number): void {
         gpuRenderer.beginGpuTiming?.();
 
         try {
-            void renderCurrentState();
+            activeRenderer.render(replayState ?? createRenderState(simulation));
         } finally {
             gpuRenderer.endGpuTiming?.();
         }
@@ -864,6 +1075,7 @@ function frame(currentTime: number): void {
             simulationTime,
             renderTime,
             simulation.getVehicles().length,
+            rafInterval,
         );
 
         benchmarkUi.renderCurrent(
@@ -876,6 +1088,9 @@ function frame(currentTime: number): void {
     }
 
     requestAnimationFrame(frame);
+
+    browserRenderChannel.port2.postMessage(null);
+    browserRenderStart = performance.now();
 }
 
 void start();
