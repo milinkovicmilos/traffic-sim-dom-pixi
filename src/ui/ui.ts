@@ -388,6 +388,7 @@ export class BenchmarkUi {
             frameTimeMs: number;
             simulationTimeMs: number;
             renderTimeMs: number;
+            browserRenderTimeMs: number | null;
             gpuTimeMs: number | null;
             mainThreadUtilization: number;
             memoryMb: number | null;
@@ -406,10 +407,8 @@ export class BenchmarkUi {
             ${metric('Frame Time', `${metrics.frameTimeMs.toFixed(2)} ms`)}
             ${metric('Simulation Time', `${metrics.simulationTimeMs.toFixed(2)} ms`)}
             ${metric('Renderer Time', `${metrics.renderTimeMs.toFixed(2)} ms`)}
-            ${metric(
-                'GPU Time',
-                metrics.gpuTimeMs === null ? 'N/A' : `${metrics.gpuTimeMs.toFixed(2)} ms`,
-            )}
+            ${metric('Browser Render', formatOptionalMs(metrics.browserRenderTimeMs))}
+            ${metric('GPU Time', formatOptionalMs(metrics.gpuTimeMs))}
             ${metric('Main Thread', `${metrics.mainThreadUtilization.toFixed(1)}%`)}
             ${metric(
                 'JS Heap (Chromium only)',
@@ -449,9 +448,11 @@ export class BenchmarkUi {
                 ${metric('P95 Simulation', `${snapshot.p95SimulationTime.toFixed(2)} ms`)}
                 ${metric('Avg Renderer', `${snapshot.averageRenderTime.toFixed(2)} ms`)}
                 ${metric('P95 Renderer', `${snapshot.p95RenderTime.toFixed(2)} ms`)}
-                ${metric('Avg GPU', formatGpuTime(snapshot.averageGpuTime))}
-                ${metric('P95 GPU', formatGpuTime(snapshot.p95GpuTime))}
-                ${metric('Peak GPU', formatGpuTime(snapshot.peakGpuTime))}
+                ${metric('Avg Browser Render', formatOptionalMs(snapshot.averageBrowserRenderTime))}
+                ${metric('P95 Browser Render', formatOptionalMs(snapshot.p95BrowserRenderTime))}
+                ${metric('Avg GPU', formatOptionalMs(snapshot.averageGpuTime))}
+                ${metric('P95 GPU', formatOptionalMs(snapshot.p95GpuTime))}
+                ${metric('Peak GPU', formatOptionalMs(snapshot.peakGpuTime))}
                 ${metric('Avg Main Thread', `${snapshot.averageMainThreadUtilization.toFixed(1)}%`)}
                 ${metric('Peak Main Thread', `${snapshot.peakMainThreadUtilization.toFixed(1)}%`)}
                 ${metric('Memory Start', formatMemory(snapshot.memoryStartMb))}
@@ -566,8 +567,9 @@ export class BenchmarkUi {
                     <td>${snapshot.averageSimulationTime.toFixed(2)} ms</td>
                     <td>${snapshot.p95SimulationTime.toFixed(2)} ms</td>
                     <td>${snapshot.averageRenderTime.toFixed(2)} ms</td>
-                    <td>${formatGpuTime(snapshot.averageGpuTime)}</td>
-                    <td>${formatGpuTime(snapshot.p95GpuTime)}</td>
+                    <td>${formatOptionalMs(snapshot.averageBrowserRenderTime)}</td>
+                    <td>${formatOptionalMs(snapshot.averageGpuTime)}</td>
+                    <td>${formatOptionalMs(snapshot.p95GpuTime)}</td>
                     <td>${snapshot.averageMainThreadUtilization.toFixed(1)}%</td>
                     <td>${formatMemory(snapshot.memoryPeakMb)}</td>
                 </tr>
@@ -593,6 +595,7 @@ export class BenchmarkUi {
                             <th>Avg Sim</th>
                             <th>P95 Sim</th>
                             <th>Avg Render</th>
+                            <th>Avg Browser</th>
                             <th>Avg GPU</th>
                             <th>P95 GPU</th>
                             <th>Avg Main Thread</th>
@@ -742,7 +745,7 @@ export function formatMemory(value: number | null): string {
     return value === null ? 'N/A' : `${value.toFixed(1)} MB`;
 }
 
-export function formatGpuTime(value: number | null): string {
+export function formatOptionalMs(value: number | null): string {
     return value === null ? 'N/A' : `${value.toFixed(2)} ms`;
 }
 

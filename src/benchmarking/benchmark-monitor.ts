@@ -5,7 +5,6 @@ export interface BenchmarkFrameSample {
     frameTime: number;
     simulationTime: number;
     renderTime: number;
-    fps: number;
     mainThreadUtilization: number;
     rafInterval: number | null;
 }
@@ -52,6 +51,8 @@ export interface BenchmarkSnapshot {
     p95SimulationTime: number;
     averageRenderTime: number;
     p95RenderTime: number;
+    averageBrowserRenderTime: number | null;
+    p95BrowserRenderTime: number | null;
     averageGpuTime: number | null;
     p95GpuTime: number | null;
     peakGpuTime: number | null;
@@ -72,6 +73,7 @@ export interface BenchmarkCurrentMetrics {
     frameTimeMs: number;
     simulationTimeMs: number;
     renderTimeMs: number;
+    browserRenderTimeMs: number | null;
     gpuTimeMs: number | null;
     mainThreadUtilization: number;
     memoryMb: number | null;
@@ -102,16 +104,19 @@ export class BenchmarkMonitor {
     private recordingMemoryPeakMb: number | null = null;
     private currentMemoryMb: number | null = null;
     private lastMemorySampleTime = 0;
-    private readonly liveFrameTimes: number[] = [];
-    private readonly liveFrameTimeLimit = 60;
+    private readonly liveRafIntervals: number[] = [];
+    private readonly liveRafIntervalLimit = 60;
     private latestGpuTimeMs: number | null = null;
     private readonly gpuTimes: number[] = [];
+    private latestBrowserRenderTimeMs: number | null = null;
+    private readonly browserRenderTimes: number[] = [];
     private currentMetrics: BenchmarkCurrentMetrics = {
         renderer: 'dom',
         fps: 0,
         frameTimeMs: 0,
         simulationTimeMs: 0,
         renderTimeMs: 0,
+        browserRenderTimeMs: null,
         gpuTimeMs: null,
         mainThreadUtilization: 0,
         memoryMb: null,
@@ -146,18 +151,29 @@ export class BenchmarkMonitor {
         }
     }
 
+    recordBrowserRenderTime(browserRenderTimeMs: number): void {
+        this.latestBrowserRenderTimeMs = browserRenderTimeMs;
+
+        if (this.recording) {
+            this.browserRenderTimes.push(browserRenderTimeMs);
+        }
+    }
+
     resetLiveMetrics(renderer: RendererType, vehicleCount: number): void {
-        this.liveFrameTimes.length = 0;
+        this.liveRafIntervals.length = 0;
         this.currentMemoryMb = this.readMemoryMb();
         this.lastMemorySampleTime = performance.now();
         this.latestGpuTimeMs = null;
         this.gpuTimes.length = 0;
+        this.latestBrowserRenderTimeMs = null;
+        this.browserRenderTimes.length = 0;
 
         this.currentMetrics = {
             renderer,
             fps: 0,
             frameTimeMs: 0,
             simulationTimeMs: 0,
+            browserRenderTimeMs: null,
             gpuTimeMs: null,
             renderTimeMs: 0,
             mainThreadUtilization: 0,
@@ -239,6 +255,7 @@ export class BenchmarkMonitor {
         this.recordingSamples = [];
         this.gpuTimes.length = 0;
         this.latestGpuTimeMs = null;
+        this.browserRenderTimes.length = 0;
         this.recordingMemoryStartMb = this.readMemoryMb();
         this.recordingMemoryPeakMb = this.recordingMemoryStartMb;
         this.lastMemorySampleTime = performance.now();
@@ -274,6 +291,7 @@ export class BenchmarkMonitor {
         const rafIntervals = samples
             .map((sample) => sample.rafInterval)
             .filter((interval) => interval !== null);
+        const averageRafInterval = this.average(rafIntervals);
 
         const snapshot: BenchmarkSnapshot = {
             suiteId: runLabel?.suiteId ?? null,
@@ -282,14 +300,14 @@ export class BenchmarkMonitor {
             renderer: recordingRenderer,
             durationMs,
             frameCount: samples.length,
-            averageFps: this.average(samples.map((sample) => sample.fps)),
-            low1PercentFps: this.calculateLow1PercentFps(samples),
+            averageFps: averageRafInterval > 0 ? 1000 / averageRafInterval : 0,
+            low1PercentFps: this.calculateLow1PercentFps(rafIntervals),
             averageFrameTime: this.average(samples.map((sample) => sample.frameTime)),
             p95FrameTime: this.percentile(
                 samples.map((sample) => sample.frameTime),
                 95,
             ),
-            averageRafInterval: this.average(rafIntervals),
+            averageRafInterval,
             p95RafInterval: this.percentile(rafIntervals, 95),
             averageSimulationTime: this.average(samples.map((sample) => sample.simulationTime)),
             p95SimulationTime: this.percentile(
@@ -301,6 +319,12 @@ export class BenchmarkMonitor {
                 samples.map((sample) => sample.renderTime),
                 95,
             ),
+            averageBrowserRenderTime:
+                this.browserRenderTimes.length === 0 ? null : this.average(this.browserRenderTimes),
+            p95BrowserRenderTime:
+                this.browserRenderTimes.length === 0
+                    ? null
+                    : this.percentile(this.browserRenderTimes, 95),
             averageGpuTime: this.gpuTimes.length === 0 ? null : this.average(this.gpuTimes),
             p95GpuTime: this.gpuTimes.length === 0 ? null : this.percentile(this.gpuTimes, 95),
             peakGpuTime: this.gpuTimes.length === 0 ? null : Math.max(...this.gpuTimes),
@@ -325,6 +349,7 @@ export class BenchmarkMonitor {
         this.recordingSamples = [];
         this.gpuTimes.length = 0;
         this.latestGpuTimeMs = null;
+        this.browserRenderTimes.length = 0;
         this.recordingMemoryStartMb = null;
         this.recordingMemoryPeakMb = null;
 
@@ -341,24 +366,27 @@ export class BenchmarkMonitor {
     ): void {
         const safeFrameTime = Math.max(frameTime, 0.001);
 
-        this.liveFrameTimes.push(safeFrameTime);
+        if (rafInterval !== null) {
+            this.liveRafIntervals.push(rafInterval);
 
-        if (this.liveFrameTimes.length > this.liveFrameTimeLimit) {
-            this.liveFrameTimes.shift();
+            if (this.liveRafIntervals.length > this.liveRafIntervalLimit) {
+                this.liveRafIntervals.shift();
+            }
         }
 
-        const averageLiveFrameTime = this.average(this.liveFrameTimes);
-        const fps = averageLiveFrameTime > 0 ? 1000 / averageLiveFrameTime : 0;
+        const averageLiveRafInterval = this.average(this.liveRafIntervals);
+        const fps = averageLiveRafInterval > 0 ? 1000 / averageLiveRafInterval : 0;
 
         /*
-         * This is the percentage of the frame budget spent by:
+         * This is the percentage of the real frame interval spent by:
          *
          *   simulation + renderer
          *
          * It is not total browser main-thread utilization.
          */
         const appTime = simulationTime + renderTime;
-        const mainThreadUtilization = Math.min(100, Math.max(0, (appTime / safeFrameTime) * 100));
+        const frameBudget = Math.max(rafInterval ?? safeFrameTime, 0.001);
+        const mainThreadUtilization = Math.min(100, Math.max(0, (appTime / frameBudget) * 100));
 
         if (timestamp - this.lastMemorySampleTime >= 250) {
             this.currentMemoryMb = this.readMemoryMb();
@@ -379,6 +407,7 @@ export class BenchmarkMonitor {
             fps,
             frameTimeMs: safeFrameTime,
             simulationTimeMs: simulationTime,
+            browserRenderTimeMs: this.latestBrowserRenderTimeMs,
             gpuTimeMs: this.latestGpuTimeMs,
             renderTimeMs: renderTime,
             mainThreadUtilization,
@@ -393,7 +422,6 @@ export class BenchmarkMonitor {
                 frameTime: safeFrameTime,
                 simulationTime,
                 renderTime,
-                fps,
                 mainThreadUtilization,
                 rafInterval,
             });
@@ -411,19 +439,19 @@ export class BenchmarkMonitor {
         return memory.usedJSHeapSize / (1024 * 1024);
     }
 
-    private calculateLow1PercentFps(samples: readonly BenchmarkFrameSample[]): number {
-        if (samples.length === 0) {
+    private calculateLow1PercentFps(rafIntervals: readonly number[]): number {
+        if (rafIntervals.length === 0) {
             return 0;
         }
 
-        const frameTimes = samples.map((sample) => sample.frameTime).sort((a, b) => b - a);
+        const sortedIntervals = [...rafIntervals].sort((a, b) => b - a);
 
-        const count = Math.max(1, Math.ceil(frameTimes.length * 0.01));
+        const count = Math.max(1, Math.ceil(sortedIntervals.length * 0.01));
 
-        const slowestFrames = frameTimes.slice(0, count);
-        const averageSlowFrameTime = this.average(slowestFrames);
+        const slowestFrames = sortedIntervals.slice(0, count);
+        const averageSlowInterval = this.average(slowestFrames);
 
-        return averageSlowFrameTime > 0 ? 1000 / averageSlowFrameTime : 0;
+        return averageSlowInterval > 0 ? 1000 / averageSlowInterval : 0;
     }
 
     private average(values: readonly number[]): number {

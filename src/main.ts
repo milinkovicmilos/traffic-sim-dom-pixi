@@ -127,9 +127,27 @@ let previousTime = performance.now();
 let previousRafTime: number | null = null;
 let suiteRunCount = 0;
 let probedGpuName: string | null | undefined;
+let browserRenderStart: number | null = null;
 
 const REFRESH_RATE_MEASUREMENT_MS = 2000;
 const HOST_ID_STORAGE_KEY = 'benchmark-host-id';
+
+/*
+ * The browser runs style, layout and paint in the same task as the rAF callbacks,
+ * so a message posted from the callback arrives once that main-thread work is done.
+ * If a later frame runs first, its end overwrites the start time and the message
+ * measures that frame instead, so the time is never attributed across two frames.
+ */
+const browserRenderChannel = new MessageChannel();
+
+browserRenderChannel.port1.onmessage = () => {
+    if (browserRenderStart === null) {
+        return;
+    }
+
+    benchmarkMonitor.recordBrowserRenderTime(performance.now() - browserRenderStart);
+    browserRenderStart = null;
+};
 
 interface RendererWithGpuTiming {
     beginGpuTiming?(): void;
@@ -951,6 +969,7 @@ function frame(currentTime: number): void {
     const rafInterval = previousRafTime === null ? null : currentTime - previousRafTime;
 
     previousRafTime = currentTime;
+    browserRenderStart = null;
 
     if (restartInProgress || rendererOperationInProgress || refreshRateMeasurementInProgress) {
         previousTime = currentTime;
@@ -1009,6 +1028,9 @@ function frame(currentTime: number): void {
     }
 
     requestAnimationFrame(frame);
+
+    browserRenderChannel.port2.postMessage(null);
+    browserRenderStart = performance.now();
 }
 
 void start();
