@@ -18,6 +18,7 @@ import type { RoadMap } from '@core/map/road-map';
 import type { VehicleState } from '@core/vehicles/vehicle-state';
 import type { Renderer, RenderState, TrafficLightRenderState } from '@rendering/renderer';
 import { getWebGlGpuName, getWebGpuGpuName } from '@shared/utils/gpu/gpu-name';
+import './pixi-batcher-patch';
 import { requestWebGpuDevice, WebGpuGpuTimer } from './webgpu-gpu-timer';
 
 export interface PixiRendererOptions {
