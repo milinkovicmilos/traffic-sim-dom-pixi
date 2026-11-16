@@ -18,7 +18,7 @@ import type { RoadMap } from '@core/map/road-map';
 import type { VehicleState } from '@core/vehicles/vehicle-state';
 import type { Renderer, RenderState, TrafficLightRenderState } from '@rendering/renderer';
 import { getWebGlGpuName, getWebGpuGpuName } from '@shared/utils/gpu/gpu-name';
-import { requestTimestampGpu, WebGpuGpuTimer } from './webgpu-gpu-timer';
+import { requestWebGpuDevice, WebGpuGpuTimer } from './webgpu-gpu-timer';
 
 export interface PixiRendererOptions {
     container: HTMLElement;
@@ -190,12 +190,12 @@ export class PixiRenderer implements Renderer {
 
         this.app = new Application();
 
-        const timestampGpu = this.preference === 'webgpu' ? await requestTimestampGpu() : null;
+        const webGpu = this.preference === 'webgpu' ? await requestWebGpuDevice() : null;
 
-        this.webGpuDevice = timestampGpu?.device ?? null;
+        this.webGpuDevice = webGpu?.device ?? null;
 
         await this.app.init({
-            ...(timestampGpu ? { webgpu: { gpu: timestampGpu } } : {}),
+            ...(webGpu ? { webgpu: { gpu: webGpu } } : {}),
             width: 1,
             height: 1,
             resolution,
@@ -386,8 +386,11 @@ export class PixiRenderer implements Renderer {
     private setupWebGpuGpuTiming(): void {
         const renderer = this.app.renderer;
 
-        // Only our own device has timestamp queries, Pixi never requests them.
-        if (!(renderer instanceof WebGPURenderer) || !this.webGpuDevice) {
+        // Only our own device can have timestamp queries, Pixi never requests them.
+        if (
+            !(renderer instanceof WebGPURenderer) ||
+            !this.webGpuDevice?.features.has('timestamp-query')
+        ) {
             return;
         }
 

@@ -5,19 +5,30 @@ const BYTES_PER_TIMESTAMP = 8;
 const READBACK_BUFFER_COUNT = 4;
 
 /*
- * Pixi does not request 'timestamp-query', so we create the device and hand it over.
- * The features and limits mirror GpuDeviceSystem._createDeviceAndAdaptor.
- *
- * Returns null when timing is unsupported, which leaves device creation to Pixi.
+ * Pixi caches texture batch bind groups in a module-level map keyed only by texture uids,
+ * shared by every renderer. WebGL fills it with 16-slot groups, so a WebGPU device with a
+ * higher sampled-texture limit (e.g. D3D12 on Windows) would reuse a group that is missing
+ * the extra slots and fail with "[BindGroup] the resource bound as 'textureSource17' was
+ * destroyed". 16 is the WebGPU default and the WebGL batch size, which also keeps batching
+ * identical across backends for the benchmark.
  */
-export async function requestTimestampGpu(): Promise<{
+const MAX_BATCH_TEXTURES = 16;
+
+/*
+ * Pixi does not request 'timestamp-query' and requests the adapter's maximum texture limits,
+ * so we always create the device and hand it over. The features mirror
+ * GpuDeviceSystem._createDeviceAndAdaptor, plus 'timestamp-query' when available.
+ *
+ * Returns null only when device creation fails, which leaves it to Pixi.
+ */
+export async function requestWebGpuDevice(): Promise<{
     adapter: GPUAdapter;
     device: GPUDevice;
 } | null> {
     try {
         const adapter = await navigator.gpu.requestAdapter();
 
-        if (!adapter?.features.has('timestamp-query')) {
+        if (!adapter) {
             return null;
         }
 
@@ -34,8 +45,14 @@ export async function requestTimestampGpu(): Promise<{
         const device = await adapter.requestDevice({
             requiredFeatures,
             requiredLimits: {
-                maxSampledTexturesPerShaderStage: adapter.limits.maxSampledTexturesPerShaderStage,
-                maxSamplersPerShaderStage: adapter.limits.maxSamplersPerShaderStage,
+                maxSampledTexturesPerShaderStage: Math.min(
+                    adapter.limits.maxSampledTexturesPerShaderStage,
+                    MAX_BATCH_TEXTURES,
+                ),
+                maxSamplersPerShaderStage: Math.min(
+                    adapter.limits.maxSamplersPerShaderStage,
+                    MAX_BATCH_TEXTURES,
+                ),
             },
         });
 
