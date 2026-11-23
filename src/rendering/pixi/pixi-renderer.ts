@@ -114,6 +114,7 @@ export class PixiRenderer implements Renderer {
     private readonly preference: 'webgl' | 'webgpu';
 
     private app!: Application;
+    private appDestroyed = false;
     private scene!: Container;
     private world!: Container;
     private roadsLayer!: Container;
@@ -193,6 +194,7 @@ export class PixiRenderer implements Renderer {
         const resolution = Math.min(Math.max(devicePixelRatio, 1), 2);
 
         this.app = new Application();
+        this.appDestroyed = false;
 
         const webGpu = this.preference === 'webgpu' ? await requestWebGpuDevice() : null;
 
@@ -1292,24 +1294,36 @@ export class PixiRenderer implements Renderer {
         this.webGpuTimer = null;
         this.gpuName = null;
 
-        if (this.app) {
-            this.app.destroy(true, {
-                children: true,
-                texture: false,
-            });
+        try {
+            if (this.app && !this.appDestroyed) {
+                // Marked first: if Pixi throws midway, destroying the half-destroyed app
+                // again would make every later run fail as well.
+                this.appDestroyed = true;
+
+                // An object, not `true`: `true` also clears Pixi's global TexturePool, which the
+                // other Pixi renderer still holds text textures from. Returning one of those
+                // later then throws, because its pool entry is gone.
+                this.app.destroy(
+                    { removeView: true },
+                    {
+                        children: true,
+                        texture: false,
+                    },
+                );
+            }
+        } finally {
+            // Pixi leaves a device it was handed alone, so it is ours to destroy.
+            this.webGpuDevice?.destroy();
+            this.webGpuDevice = null;
+
+            this.container.replaceChildren();
+
+            this.initialized = false;
+            this.renderedRoadMap = null;
+            this.cameraX = 0;
+            this.cameraY = 0;
+            this.viewportWidth = 1;
+            this.viewportHeight = 1;
         }
-
-        // Pixi leaves a device it was handed alone, so it is ours to destroy.
-        this.webGpuDevice?.destroy();
-        this.webGpuDevice = null;
-
-        this.container.replaceChildren();
-
-        this.initialized = false;
-        this.renderedRoadMap = null;
-        this.cameraX = 0;
-        this.cameraY = 0;
-        this.viewportWidth = 1;
-        this.viewportHeight = 1;
     }
 }
