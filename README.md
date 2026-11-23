@@ -25,6 +25,8 @@ The `codeVersion` field in the results comes from `git describe --tags --always 
 
 The top bar sets the grid rows and columns, the vehicle count and the renderer. PixiJS WebGPU is disabled when the browser does not support WebGPU.
 
+Add `?noTimers=1` to the URL (e.g. `http://localhost:5173/traffic-sim-dom-pixi/?noTimers=1`) to hide the countdown text next to the traffic lights. The lights are still drawn and still change color in every renderer. The parameter applies to the live view, and is the default for new scenarios in a custom suite. In **Configure Suite**, the **Timers** checkbox turns timers on or off for each scenario. The standard suite ignores the parameter, because each of its scenarios sets timers on or off itself.
+
 ## Running the standard suite
 
 1. In the **Benchmark** panel, enter the machine number in the **Host** field. It goes into the exported file name and is remembered by the browser.
@@ -42,13 +44,17 @@ The top bar sets the grid rows and columns, the vehicle count and the renderer. 
 
 The standard suite is defined in `src/benchmarking/benchmark-suite-config.ts`:
 
-| Group | Grid | Vehicles |
-|---|---|---|
-| `V` (vehicle count scaling) | 30×30 | 100, 250, 500, 1000, 2000, 4000, 8000, 16000 |
-| `M` (map size scaling) | 10×10, 20×20, 40×40, 60×60 | 1000 |
-| `S` (small scenarios) | 5×5, 10×10 | 100 |
+| Group | Grid | Vehicles | Timers |
+|---|---|---|---|
+| `V` (vehicle count scaling) | 30×30 | 100, 250, 500, 1000, 2000, 4000, 8000, 16000 | on |
+| `M` (map size scaling) | 10×10, 20×20, 40×40, 60×60 | 1000 | on |
+| `S` (small scenarios) | 5×5, 10×10 | 100 | off |
+| `P` (vehicle count scaling on a small map) | 10×10 | 100, 250, 500 | off |
 
-Each of the 14 scenarios runs on all three renderers, for **42 measurements**. A full suite takes about 10 minutes.
+"Timers off" means the traffic lights are drawn and change color, but without the countdown text. Text is expensive to render and would dominate small scenes, so without it groups `S` and `P` mostly measure the cost of drawing the scene's objects.
+
+
+Each of the 17 scenarios runs on all three renderers, for **51 measurements**. A full suite takes about 12 minutes.
 
 One suite run goes like this:
 
@@ -74,7 +80,7 @@ The file is an array of results, one per scenario and renderer combination, orde
 ```jsonc
 [
   {
-    "setup": { "id": "V-30x30-100", "name": "30x30 • 100 vehicles", "rows": 30, "columns": 30, "vehicleCount": 100 },
+    "setup": { "id": "V-30x30-100", "name": "30x30 • 100 vehicles", "rows": 30, "columns": 30, "vehicleCount": 100, "trafficLightTimers": true },
     "renderer": "pixi-webgl",
     "status": "complete",
     "snapshot": { /* metrics, see below */ },
@@ -95,7 +101,7 @@ The file is an array of results, one per scenario and renderer combination, orde
 
 | Field | Type | Description |
 |---|---|---|
-| `setup` | object | The scenario: `id`, `name`, `rows`, `columns`, `vehicleCount`. Standard scenario IDs have the form `{group}-{rows}x{columns}-{vehicles}`. |
+| `setup` | object | The scenario: `id`, `name`, `rows`, `columns`, `vehicleCount`, `trafficLightTimers`. Standard scenario IDs have the form `{group}-{rows}x{columns}-{vehicles}`, with a `-notimers` suffix when `trafficLightTimers` is `false`. |
 | `renderer` | string | `dom`, `pixi-webgl` or `pixi-webgpu` |
 | `status` | string | `complete`: measured; `skipped`: renderer unavailable; `failed`: error during preparation or measurement |
 | `snapshot` | object \| `null` | The metrics; `null` unless the status is `complete` |

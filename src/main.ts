@@ -64,6 +64,11 @@ function generateRandomSeed(): number {
 
 let currentSimulationSeed = generateRandomSeed();
 
+// ?noTimers=1 hides the traffic-light countdowns outside the standard suite,
+// whose setups choose for themselves.
+const defaultTrafficLightTimers =
+    new URLSearchParams(window.location.search).get('noTimers') !== '1';
+
 function createSimulationConfig(): SimulationConfig {
     return {
         grid: { ...gridConfig },
@@ -86,6 +91,7 @@ let customBenchmarkSuiteConfig: BenchmarkSuiteConfig = {
             rows: gridConfig.rows,
             columns: gridConfig.columns,
             vehicleCount: vehiclesConfig.count,
+            trafficLightTimers: defaultTrafficLightTimers,
         },
     ],
 };
@@ -206,6 +212,14 @@ const renderers: Record<RendererType, Renderer> = {
     'pixi-webgl': createRenderer('pixi-webgl', rendererOptions),
     'pixi-webgpu': createRenderer('pixi-webgpu', rendererOptions),
 };
+
+function setTrafficLightTimersVisible(visible: boolean): void {
+    for (const renderer of Object.values(renderers)) {
+        renderer.setTrafficLightTimersVisible(visible);
+    }
+}
+
+setTrafficLightTimersVisible(defaultTrafficLightTimers);
 
 let activeRendererType: RendererType = 'dom';
 let activeRenderer = renderers.dom;
@@ -521,6 +535,7 @@ function readBenchmarkSetupsFromUi(): BenchmarkSuiteSetup[] {
             rows: parseIntegerValue(rowsInput, `Rows for ${name}`, 2),
             columns: parseIntegerValue(columnsInput, `Columns for ${name}`, 2),
             vehicleCount: parseIntegerValue(vehicleCountInput, `Vehicles for ${name}`, 1),
+            trafficLightTimers: getInput(row, 'trafficLightTimers').checked,
         };
     });
 }
@@ -582,6 +597,8 @@ const benchmarkSuiteRunner = new BenchmarkSuiteRunner(benchmarkMonitor, {
             force: true,
             updateInputs: true,
         });
+
+        setTrafficLightTimersVisible(setup.trafficLightTimers);
 
         const switched = await switchRendererInternal(renderer);
 
@@ -773,6 +790,7 @@ async function startBenchmarkSuite(config: BenchmarkSuiteConfig): Promise<void> 
 
         try {
             currentSimulationSeed = originalSeed;
+            setTrafficLightTimersVisible(defaultTrafficLightTimers);
 
             await rebuildSimulation(originalRows, originalColumns, originalVehicleCount, {
                 force: true,
@@ -889,6 +907,7 @@ elements.suiteAddSetup.addEventListener('click', () => {
             rows: gridConfig.rows,
             columns: gridConfig.columns,
             vehicleCount: vehiclesConfig.count,
+            trafficLightTimers: defaultTrafficLightTimers,
         });
 
         customBenchmarkSuiteConfig = {

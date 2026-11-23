@@ -675,6 +675,18 @@ export function renderSuiteSetups(container: HTMLDivElement, config: BenchmarkSu
                 />
             </label>
 
+            <label
+                class="benchmark-config-field benchmark-config-checkbox"
+                title="Show the countdown next to each traffic light"
+            >
+                <span>Timers</span>
+                <input
+                    type="checkbox"
+                    data-field="trafficLightTimers"
+                    ${setup.trafficLightTimers ? 'checked' : ''}
+                />
+            </label>
+
             <button
                 class="benchmark-remove-setup"
                 type="button"

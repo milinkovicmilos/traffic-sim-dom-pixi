@@ -16,7 +16,7 @@ interface TrafficLightElements {
     red: HTMLDivElement;
     yellow: HTMLDivElement;
     green: HTMLDivElement;
-    timer: HTMLDivElement;
+    timer: HTMLDivElement | null;
     lastColor: TrafficLightRenderState['color'] | null;
     lastTimerText: string;
 }
@@ -45,6 +45,9 @@ export class DOMRenderer implements Renderer {
     private initialized = false;
 
     private renderedRoadMap: RoadMap | null = null;
+
+    private trafficLightTimersVisible = true;
+    private trafficLightsStale = false;
 
     constructor(options: DOMRendererOptions) {
         this.container = options.container;
@@ -87,10 +90,21 @@ export class DOMRenderer implements Renderer {
             this.renderMap(state.roadMap);
             this.createTrafficLights(state.trafficLights);
             this.renderedRoadMap = state.roadMap;
+        } else if (this.trafficLightsStale) {
+            this.createTrafficLights(state.trafficLights);
         }
 
         this.updateTrafficLights(state.trafficLights);
         this.updateVehicles(state.vehicles);
+    }
+
+    setTrafficLightTimersVisible(visible: boolean): void {
+        if (visible === this.trafficLightTimersVisible) {
+            return;
+        }
+
+        this.trafficLightTimersVisible = visible;
+        this.trafficLightsStale = true;
     }
 
     destroy(): void {
@@ -171,6 +185,7 @@ export class DOMRenderer implements Renderer {
     private createTrafficLights(states: readonly TrafficLightRenderState[]): void {
         this.trafficLightsLayer.replaceChildren();
         this.trafficLightElements.clear();
+        this.trafficLightsStale = false;
 
         for (const state of states) {
             const elements = this.createTrafficLight(state);
@@ -193,9 +208,15 @@ export class DOMRenderer implements Renderer {
         const green = this.createElement('traffic-light-lamp');
         green.classList.add('traffic-light-lamp-green');
 
-        const timer = this.createElement('traffic-light-timer');
+        root.append(red, yellow, green);
 
-        root.append(red, yellow, green, timer);
+        let timer: HTMLDivElement | null = null;
+
+        if (this.trafficLightTimersVisible) {
+            timer = this.createElement('traffic-light-timer');
+            root.append(timer);
+        }
+
         this.trafficLightsLayer.appendChild(root);
 
         return {
@@ -223,6 +244,10 @@ export class DOMRenderer implements Renderer {
                 elements.green.classList.toggle('is-active', state.color === 'green');
 
                 elements.lastColor = state.color;
+            }
+
+            if (!elements.timer) {
+                continue;
             }
 
             const timerText = `${(state.remainingTime / 1000).toFixed(1)}s`;

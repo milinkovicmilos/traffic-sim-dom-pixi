@@ -9,6 +9,7 @@ export interface BenchmarkSuiteSetup {
     rows: number;
     columns: number;
     vehicleCount: number;
+    trafficLightTimers: boolean;
 }
 
 export type BenchmarkSuiteRunStatus = 'complete' | 'skipped' | 'failed';
