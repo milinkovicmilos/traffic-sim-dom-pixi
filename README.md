@@ -38,7 +38,21 @@ Add `?noTimers=1` to the URL (e.g. `http://localhost:5173/traffic-sim-dom-pixi/?
    H{host}_{Browser}_{version}_run{n}.json
    ```
 
-   e.g. `H1_Firefox_160_run1.json`. `n` counts the suites run since the page was loaded. The **Copy JSON** button in the results window copies the same JSON to the clipboard.
+   e.g. `H1_Firefox_160_run1.json`. `n` is the run number shown under the panel title (**Next standard run**). The **Copy JSON** button in the results window copies the same JSON to the clipboard.
+
+### Run numbers and renderer order
+
+Measuring the renderers always in the same order could bias the results (JIT warmup, caches, heat, memory), so the standard suite rotates the order between runs. Run `k` starts with renderer `(k - 1) mod 3`:
+
+| Run | Order |
+|---|---|
+| 1, 4, 7, … | DOM → WebGL → WebGPU |
+| 2, 5, 8, … | WebGL → WebGPU → DOM |
+| 3, 6, 9, … | WebGPU → DOM → WebGL |
+
+The run number is kept in the browser's local storage, so it survives closing the browser between runs. It goes up by one after a suite that ends without `failed` results (`skipped` ones are fine). A run with failures keeps its number, so repeating it repeats the same order. The counter starts over at 1 when the app version (`codeVersion`) changes, and **Reset Runs** starts it over manually, e.g. to record a series again. The counter is per browser, since each browser has its own storage.
+
+A custom suite keeps the renderer order picked in its dialog and does not change the counter.
 
 ### What the suite measures
 
@@ -60,7 +74,7 @@ One suite run goes like this:
 
 1. It measures `requestAnimationFrame` intervals for 2 s to estimate the display refresh rate.
 2. For each scenario, it computes the simulation once up front, at a fixed step of 60 states per second with the fixed seed `123456789`. All three renderers then replay the same states, so they draw identical traffic.
-3. Each renderer gets 3 s of warmup followed by 10 s of measurement.
+3. Each renderer gets 3 s of warmup followed by 10 s of measurement, in the order of the current run (see above).
 4. At the end, the previous scenario and renderer are restored.
 
 Because the seed is fixed, `trace.stateHash` is the same for a given scenario on every machine and browser. You can use it to confirm that two measurements simulated the same thing.
@@ -75,13 +89,15 @@ A measurement with `frameCount` close to zero, or with `low1PercentFps` far belo
 
 ## JSON format
 
-The file is an array of results, one per scenario and renderer combination, ordered scenario by scenario and, within each scenario, `dom`, `pixi-webgl`, `pixi-webgpu`.
+The file is an array of results, one per scenario and renderer combination, ordered scenario by scenario and, within each scenario, in the order the renderers ran (`rendererOrder`).
 
 ```jsonc
 [
   {
     "setup": { "id": "V-30x30-100", "name": "30x30 • 100 vehicles", "rows": 30, "columns": 30, "vehicleCount": 100, "trafficLightTimers": true },
     "renderer": "pixi-webgl",
+    "rendererOrder": ["dom", "pixi-webgl", "pixi-webgpu"],
+    "rendererPosition": 2,
     "status": "complete",
     "snapshot": { /* metrics, see below */ },
     "trace": { "stateHash": "477ef3e9", "statesPerSecond": 60, "stateCount": 901, "averageStepTime": 0.14, "p95StepTime": 1 },
@@ -90,6 +106,8 @@ The file is an array of results, one per scenario and renderer combination, orde
   {
     "setup": { "id": "V-30x30-100", /* ... */ },
     "renderer": "pixi-webgpu",
+    "rendererOrder": ["dom", "pixi-webgl", "pixi-webgpu"],
+    "rendererPosition": 3,
     "status": "skipped",
     "snapshot": null,
     "reason": "pixi-webgpu is unavailable."
@@ -103,6 +121,8 @@ The file is an array of results, one per scenario and renderer combination, orde
 |---|---|---|
 | `setup` | object | The scenario: `id`, `name`, `rows`, `columns`, `vehicleCount`, `trafficLightTimers`. Standard scenario IDs have the form `{group}-{rows}x{columns}-{vehicles}`, with a `-notimers` suffix when `trafficLightTimers` is `false`. |
 | `renderer` | string | `dom`, `pixi-webgl` or `pixi-webgpu` |
+| `rendererOrder` | string[] | The order the renderers ran in within every scenario of this suite run |
+| `rendererPosition` | number | This renderer's place in `rendererOrder`, starting at 1 |
 | `status` | string | `complete`: measured; `skipped`: renderer unavailable; `failed`: error during preparation or measurement |
 | `snapshot` | object \| `null` | The metrics; `null` unless the status is `complete` |
 | `trace` | object | Information about the precomputed simulation; present only when the status is `complete` |

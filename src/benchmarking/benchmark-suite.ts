@@ -17,6 +17,8 @@ export type BenchmarkSuiteRunStatus = 'complete' | 'skipped' | 'failed';
 export interface BenchmarkSuiteRunResult {
     setup: BenchmarkSuiteSetup;
     renderer: RendererType;
+    rendererOrder: RendererType[];
+    rendererPosition: number;
     status: BenchmarkSuiteRunStatus;
     snapshot: BenchmarkSnapshot | null;
     trace?: SimulationTraceInfo;
@@ -76,11 +78,15 @@ export class BenchmarkSuiteRunner {
         const runLabel = { suiteId: config.id, runIndex: options.runIndex };
         const totalRuns = config.setups.length * config.renderers.length;
 
+        const rendererOrder = [...config.renderers];
+
         let completedRuns = 0;
 
         try {
             for (const setup of config.setups) {
-                for (const renderer of config.renderers) {
+                for (const [rendererIndex, renderer] of config.renderers.entries()) {
+                    const rendererPosition = rendererIndex + 1;
+
                     options.onProgress?.({
                         completedRuns,
                         totalRuns,
@@ -102,6 +108,8 @@ export class BenchmarkSuiteRunner {
                         results.push({
                             setup,
                             renderer,
+                            rendererOrder,
+                            rendererPosition,
                             status: 'failed',
                             snapshot: null,
                             reason: getErrorMessage(error),
@@ -115,6 +123,8 @@ export class BenchmarkSuiteRunner {
                         results.push({
                             setup,
                             renderer,
+                            rendererOrder,
+                            rendererPosition,
                             status: 'skipped',
                             snapshot: null,
                             reason: `${renderer} is unavailable.`,
@@ -160,6 +170,8 @@ export class BenchmarkSuiteRunner {
                         results.push({
                             setup,
                             renderer,
+                            rendererOrder,
+                            rendererPosition,
                             status: 'complete',
                             // A replayed frame runs no simulation, so its cost comes from the trace.
                             snapshot: {
@@ -187,6 +199,8 @@ export class BenchmarkSuiteRunner {
                         results.push({
                             setup,
                             renderer,
+                            rendererOrder,
+                            rendererPosition,
                             status: 'failed',
                             snapshot: null,
                             reason: getErrorMessage(error),

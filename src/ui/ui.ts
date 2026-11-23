@@ -15,6 +15,8 @@ export interface AppElements {
     pixiWebgpuRendererHost: HTMLDivElement;
     benchmarkRecord: HTMLButtonElement;
     benchmarkHostInput: HTMLInputElement;
+    benchmarkRunInfo: HTMLElement;
+    benchmarkRunsReset: HTMLButtonElement;
     benchmarkConfigure: HTMLButtonElement;
     benchmarkSuiteRun: HTMLButtonElement;
     benchmarkStatus: HTMLElement;
@@ -110,6 +112,11 @@ export function renderApp(
                     <div>
                         <h2>Benchmark</h2>
                         <span id="benchmark-status" class="benchmark-status">Live</span>
+                        <span
+                            id="benchmark-run-info"
+                            class="benchmark-status"
+                            title="Standard suite run number and renderer order, kept between browser sessions"
+                        ></span>
                     </div>
 
                     <div class="benchmark-panel-actions">
@@ -140,6 +147,14 @@ export function renderApp(
                             type="button"
                         >
                             Run Standard Suite
+                        </button>
+                        <button
+                            id="benchmark-runs-reset"
+                            class="benchmark-record-button"
+                            type="button"
+                            title="Start counting standard suite runs from 1 again"
+                        >
+                            Reset Runs
                         </button>
                         <button
                             id="benchmark-record"
@@ -334,6 +349,8 @@ export function renderApp(
         pixiWebgpuRendererHost: getRequiredElement('#pixi-webgpu-renderer-host'),
         benchmarkRecord: getRequiredElement('#benchmark-record'),
         benchmarkHostInput: getRequiredElement('#benchmark-host-input'),
+        benchmarkRunInfo: getRequiredElement('#benchmark-run-info'),
+        benchmarkRunsReset: getRequiredElement('#benchmark-runs-reset'),
         benchmarkConfigure: getRequiredElement('#benchmark-configure'),
         benchmarkSuiteRun: getRequiredElement('#benchmark-suite-run'),
         benchmarkStatus: getRequiredElement('#benchmark-status'),

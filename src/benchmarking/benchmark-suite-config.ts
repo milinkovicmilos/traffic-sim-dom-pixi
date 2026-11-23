@@ -47,6 +47,22 @@ function createStandardSetup(
     };
 }
 
+/*
+ * Rotates the renderer order between repeated runs, so no renderer always runs first
+ * or last (JIT warmup, caches, heat and memory build up over a suite run).
+ * Run k (1-based) starts with renderer (k - 1) mod n: run 1 DOM, WebGL, WebGPU;
+ * run 2 WebGL, WebGPU, DOM; run 3 WebGPU, DOM, WebGL; run 4 starts over.
+ */
+export function rotateRenderers(
+    renderers: readonly RendererType[],
+    runIndex: number,
+): RendererType[] {
+    const count = renderers.length;
+    const offset = (((runIndex - 1) % count) + count) % count;
+
+    return [...renderers.slice(offset), ...renderers.slice(0, offset)];
+}
+
 export const standardBenchmarkSuite: BenchmarkSuiteConfig = {
     id: 'standard',
     seed: STANDARD_BENCHMARK_SEED,

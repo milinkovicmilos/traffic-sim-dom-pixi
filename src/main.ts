@@ -8,6 +8,7 @@ import {
     type BenchmarkSuiteSetup,
 } from '@benchmarking/benchmark-suite';
 import {
+    rotateRenderers,
     standardBenchmarkSuite,
     type BenchmarkSuiteConfig,
 } from '@benchmarking/benchmark-suite-config';
@@ -136,7 +137,8 @@ let restartInProgress = false;
 let refreshRateMeasurementInProgress = false;
 let previousTime = performance.now();
 let previousRafTime: number | null = null;
-let suiteRunCount = 0;
+let nextStandardRunIndex = 1;
+let customSuiteRunCount = 0;
 let probedGpuName: string | null | undefined;
 let browserRenderStart: number | null = null;
 // Kept between the renderers of one setup, so all of them replay the same states.
@@ -146,6 +148,8 @@ let replayStartTime: number | null = null;
 
 const REFRESH_RATE_MEASUREMENT_MS = 2000;
 const HOST_ID_STORAGE_KEY = 'benchmark-host-id';
+const RUN_INDEX_STORAGE_KEY = 'benchmark-run-index';
+const RUN_VERSION_STORAGE_KEY = 'benchmark-run-version';
 
 /*
  * The browser runs style, layout and paint in the same task as the rAF callbacks,
@@ -494,6 +498,7 @@ function setScenarioControlsDisabled(disabled: boolean): void {
 function setBenchmarkSuiteControlsDisabled(disabled: boolean): void {
     elements.benchmarkConfigure.disabled = disabled;
     elements.benchmarkSuiteRun.disabled = disabled;
+    elements.benchmarkRunsReset.disabled = disabled;
     elements.benchmarkRecord.disabled = disabled;
     elements.benchmarkHostInput.disabled = disabled;
     elements.rendererSelect.disabled = disabled;
@@ -667,6 +672,56 @@ function saveHostId(): void {
     }
 }
 
+function loadRunIndex(): void {
+    try {
+        const storedVersion = localStorage.getItem(RUN_VERSION_STORAGE_KEY);
+        const storedIndex = Number.parseInt(localStorage.getItem(RUN_INDEX_STORAGE_KEY) ?? '', 10);
+
+        if (
+            storedVersion === __CODE_VERSION__ &&
+            Number.isInteger(storedIndex) &&
+            storedIndex >= 1
+        ) {
+            nextStandardRunIndex = storedIndex;
+        } else {
+            // Runs of another app version are a different series.
+            nextStandardRunIndex = 1;
+            saveRunIndex();
+        }
+    } catch {
+        // Storage can be unavailable (private mode, blocked site data).
+    }
+
+    renderRunInfo();
+}
+
+function saveRunIndex(): void {
+    try {
+        localStorage.setItem(RUN_INDEX_STORAGE_KEY, String(nextStandardRunIndex));
+        localStorage.setItem(RUN_VERSION_STORAGE_KEY, __CODE_VERSION__);
+    } catch {
+        // Storage can be unavailable (private mode, blocked site data).
+    }
+}
+
+function renderRunInfo(): void {
+    const order = rotateRenderers(standardBenchmarkSuite.renderers, nextStandardRunIndex)
+        .map(getRendererLabel)
+        .join(' → ');
+
+    elements.benchmarkRunInfo.textContent = `Next standard run: ${nextStandardRunIndex} • ${order}`;
+}
+
+function resetRunIndex(): void {
+    if (benchmarkSuiteRunning || !window.confirm('Reset the standard suite run counter to 1?')) {
+        return;
+    }
+
+    nextStandardRunIndex = 1;
+    saveRunIndex();
+    renderRunInfo();
+}
+
 function getBrowserInfo(): { name: string; version: string } {
     const userAgent = navigator.userAgent;
 
@@ -720,7 +775,10 @@ async function measureRefreshRate(): Promise<void> {
     }
 }
 
-async function startBenchmarkSuite(config: BenchmarkSuiteConfig): Promise<void> {
+async function startBenchmarkSuite(
+    suite: BenchmarkSuiteConfig,
+    kind: 'standard' | 'custom',
+): Promise<void> {
     if (
         benchmarkSuiteRunning ||
         benchmarkMonitor.isRecording() ||
@@ -745,9 +803,18 @@ async function startBenchmarkSuite(config: BenchmarkSuiteConfig): Promise<void> 
         return;
     }
 
-    suiteRunCount += 1;
+    let runIndex: number;
+    let config: BenchmarkSuiteConfig;
 
-    const runIndex = suiteRunCount;
+    if (kind === 'standard') {
+        runIndex = nextStandardRunIndex;
+        config = { ...suite, renderers: rotateRenderers(suite.renderers, runIndex) };
+    } else {
+        // A custom suite keeps the renderer order that was picked.
+        customSuiteRunCount += 1;
+        runIndex = customSuiteRunCount;
+        config = suite;
+    }
 
     benchmarkSuiteRunning = true;
     setBenchmarkSuiteControlsDisabled(true);
@@ -805,6 +872,17 @@ async function startBenchmarkSuite(config: BenchmarkSuiteConfig): Promise<void> 
             await switchRendererInternal(originalRendererType);
         } catch (error) {
             console.error('Could not restore scenario after benchmark suite.', error);
+        }
+
+        // A run with failures keeps its number, so repeating it repeats its renderer order.
+        if (
+            kind === 'standard' &&
+            benchmarkSuiteResults.length > 0 &&
+            !benchmarkSuiteResults.some((result) => result.status === 'failed')
+        ) {
+            nextStandardRunIndex = runIndex + 1;
+            saveRunIndex();
+            renderRunInfo();
         }
 
         benchmarkSuiteRunning = false;
@@ -882,6 +960,8 @@ elements.benchmarkRecord.addEventListener('click', () => {
 });
 
 elements.benchmarkHostInput.addEventListener('change', saveHostId);
+
+elements.benchmarkRunsReset.addEventListener('click', resetRunIndex);
 
 elements.benchmarkConfigure.addEventListener('click', openBenchmarkConfigModal);
 
@@ -965,7 +1045,7 @@ elements.benchmarkSuiteRun.addEventListener('click', () => {
         return;
     }
 
-    void startBenchmarkSuite(standardBenchmarkSuite);
+    void startBenchmarkSuite(standardBenchmarkSuite, 'standard');
 });
 
 elements.benchmarkConfigRun.addEventListener('click', () => {
@@ -980,7 +1060,7 @@ elements.benchmarkConfigRun.addEventListener('click', () => {
         customBenchmarkSuiteConfig = config;
 
         closeBenchmarkConfigModal();
-        void startBenchmarkSuite(config);
+        void startBenchmarkSuite(config, 'custom');
     } catch (error) {
         console.error('Invalid custom benchmark suite configuration.', error);
 
@@ -1003,6 +1083,7 @@ for (const backdrop of document.querySelectorAll<HTMLElement>('[data-close-modal
 
 async function start(): Promise<void> {
     loadHostId();
+    loadRunIndex();
 
     webgpuAvailable = await isWebGPUAvailable();
     updateWebGPUOption();
