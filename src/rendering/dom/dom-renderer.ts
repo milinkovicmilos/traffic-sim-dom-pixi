@@ -16,9 +16,16 @@ interface TrafficLightElements {
     red: HTMLDivElement;
     yellow: HTMLDivElement;
     green: HTMLDivElement;
-    timer: HTMLDivElement;
+    timer: HTMLDivElement | null;
     lastColor: TrafficLightRenderState['color'] | null;
     lastTimerText: string;
+}
+
+interface VehicleElement {
+    element: HTMLImageElement;
+    x: number;
+    y: number;
+    angle: number;
 }
 
 export class DOMRenderer implements Renderer {
@@ -40,11 +47,14 @@ export class DOMRenderer implements Renderer {
     private vehiclesLayer!: HTMLDivElement;
 
     private readonly trafficLightElements = new Map<string, TrafficLightElements>();
-    private readonly vehicleElements = new Map<number, HTMLImageElement>();
+    private readonly vehicleElements: VehicleElement[] = [];
 
     private initialized = false;
 
     private renderedRoadMap: RoadMap | null = null;
+
+    private trafficLightTimersVisible = true;
+    private trafficLightsStale = false;
 
     constructor(options: DOMRendererOptions) {
         this.container = options.container;
@@ -87,14 +97,25 @@ export class DOMRenderer implements Renderer {
             this.renderMap(state.roadMap);
             this.createTrafficLights(state.trafficLights);
             this.renderedRoadMap = state.roadMap;
+        } else if (this.trafficLightsStale) {
+            this.createTrafficLights(state.trafficLights);
         }
 
         this.updateTrafficLights(state.trafficLights);
         this.updateVehicles(state.vehicles);
     }
 
+    setTrafficLightTimersVisible(visible: boolean): void {
+        if (visible === this.trafficLightTimersVisible) {
+            return;
+        }
+
+        this.trafficLightTimersVisible = visible;
+        this.trafficLightsStale = true;
+    }
+
     destroy(): void {
-        this.vehicleElements.clear();
+        this.vehicleElements.length = 0;
         this.trafficLightElements.clear();
         this.container.replaceChildren();
         this.initialized = false;
@@ -171,6 +192,7 @@ export class DOMRenderer implements Renderer {
     private createTrafficLights(states: readonly TrafficLightRenderState[]): void {
         this.trafficLightsLayer.replaceChildren();
         this.trafficLightElements.clear();
+        this.trafficLightsStale = false;
 
         for (const state of states) {
             const elements = this.createTrafficLight(state);
@@ -193,9 +215,15 @@ export class DOMRenderer implements Renderer {
         const green = this.createElement('traffic-light-lamp');
         green.classList.add('traffic-light-lamp-green');
 
-        const timer = this.createElement('traffic-light-timer');
+        root.append(red, yellow, green);
 
-        root.append(red, yellow, green, timer);
+        let timer: HTMLDivElement | null = null;
+
+        if (this.trafficLightTimersVisible) {
+            timer = this.createElement('traffic-light-timer');
+            root.append(timer);
+        }
+
         this.trafficLightsLayer.appendChild(root);
 
         return {
@@ -225,6 +253,10 @@ export class DOMRenderer implements Renderer {
                 elements.lastColor = state.color;
             }
 
+            if (!elements.timer) {
+                continue;
+            }
+
             const timerText = `${(state.remainingTime / 1000).toFixed(1)}s`;
 
             if (elements.lastTimerText !== timerText) {
@@ -235,34 +267,42 @@ export class DOMRenderer implements Renderer {
     }
 
     private updateVehicles(vehicles: readonly VehicleState[]): void {
-        const activeIndexes = new Set<number>();
+        for (let index = 0; index < vehicles.length; index += 1) {
+            const vehicle = vehicles[index];
+            let entry = this.vehicleElements[index];
 
-        vehicles.forEach((vehicle, index) => {
-            activeIndexes.add(index);
+            if (!entry) {
+                const element = this.createVehicle();
 
-            let element = this.vehicleElements.get(index);
-
-            if (!element) {
-                element = this.createVehicle();
-                this.vehicleElements.set(index, element);
                 this.vehiclesLayer.appendChild(element);
+                entry = { element, x: Number.NaN, y: Number.NaN, angle: Number.NaN };
+                this.vehicleElements.push(entry);
             }
 
-            element.style.transform =
+            // Standing vehicles (often most of them) keep their transform untouched.
+            if (
+                entry.x === vehicle.position.x &&
+                entry.y === vehicle.position.y &&
+                entry.angle === vehicle.angle
+            ) {
+                continue;
+            }
+
+            entry.element.style.transform =
                 `translate3d(` +
                 `${this.offsetX(vehicle.position.x)}px, ` +
                 `${this.offsetY(vehicle.position.y)}px, 0) ` +
                 `translate(-50%, -50%) ` +
                 `rotate(${vehicle.angle}rad)`;
-        });
 
-        for (const [index, element] of this.vehicleElements) {
-            if (activeIndexes.has(index)) {
-                continue;
-            }
+            entry.x = vehicle.position.x;
+            entry.y = vehicle.position.y;
+            entry.angle = vehicle.angle;
+        }
 
-            element.remove();
-            this.vehicleElements.delete(index);
+        // The vehicle count only changes with the scenario.
+        while (this.vehicleElements.length > vehicles.length) {
+            this.vehicleElements.pop()?.element.remove();
         }
     }
 

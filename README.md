@@ -25,6 +25,8 @@ The `codeVersion` field in the results comes from `git describe --tags --always 
 
 The top bar sets the grid rows and columns, the vehicle count and the renderer. PixiJS WebGPU is disabled when the browser does not support WebGPU.
 
+Add `?noTimers=1` to the URL (e.g. `http://localhost:5173/traffic-sim-dom-pixi/?noTimers=1`) to hide the countdown text next to the traffic lights. The lights are still drawn and still change color in every renderer. The parameter applies to the live view, and is the default for new scenarios in a custom suite. In **Configure Suite**, the **Timers** checkbox turns timers on or off for each scenario. The standard suite ignores the parameter, because each of its scenarios sets timers on or off itself.
+
 ## Running the standard suite
 
 1. In the **Benchmark** panel, enter the machine number in the **Host** field. It goes into the exported file name and is remembered by the browser.
@@ -36,25 +38,43 @@ The top bar sets the grid rows and columns, the vehicle count and the renderer. 
    H{host}_{Browser}_{version}_run{n}.json
    ```
 
-   e.g. `H1_Firefox_160_run1.json`. `n` counts the suites run since the page was loaded. The **Copy JSON** button in the results window copies the same JSON to the clipboard.
+   e.g. `H1_Firefox_160_run1.json`. `n` is the run number shown under the panel title (**Next standard run**). The **Copy JSON** button in the results window copies the same JSON to the clipboard.
+
+### Run numbers and renderer order
+
+Measuring the renderers always in the same order could bias the results (JIT warmup, caches, heat, memory), so the standard suite rotates the order between runs. Run `k` starts with renderer `(k - 1) mod 3`:
+
+| Run | Order |
+|---|---|
+| 1, 4, 7, … | DOM → WebGL → WebGPU |
+| 2, 5, 8, … | WebGL → WebGPU → DOM |
+| 3, 6, 9, … | WebGPU → DOM → WebGL |
+
+The run number is kept in the browser's local storage, so it survives closing the browser between runs. It goes up by one after a suite that ends without `failed` results (`skipped` ones are fine). A run with failures keeps its number, so repeating it repeats the same order. The counter starts over at 1 when the app version (`codeVersion`) changes, and **Reset Runs** starts it over manually, e.g. to record a series again. The counter is per browser, since each browser has its own storage.
+
+A custom suite keeps the renderer order picked in its dialog and does not change the counter.
 
 ### What the suite measures
 
 The standard suite is defined in `src/benchmarking/benchmark-suite-config.ts`:
 
-| Group | Grid | Vehicles |
-|---|---|---|
-| `V` (vehicle count scaling) | 30×30 | 100, 250, 500, 1000, 2000, 4000, 8000, 16000 |
-| `M` (map size scaling) | 10×10, 20×20, 40×40, 60×60 | 1000 |
-| `S` (small scenarios) | 5×5, 10×10 | 100 |
+| Group | Grid | Vehicles | Timers |
+|---|---|---|---|
+| `V` (vehicle count scaling) | 30×30 | 100, 250, 500, 1000, 2000, 4000, 8000, 16000 | on |
+| `M` (map size scaling) | 10×10, 20×20, 40×40, 60×60 | 1000 | on |
+| `S` (small scenarios) | 5×5, 10×10 | 100 | off |
+| `P` (vehicle count scaling on a small map) | 10×10 | 100, 250, 500 | off |
 
-Each of the 14 scenarios runs on all three renderers, for **42 measurements**. A full suite takes about 10 minutes.
+"Timers off" means the traffic lights are drawn and change color, but without the countdown text. Text is expensive to render and would dominate small scenes, so without it groups `S` and `P` mostly measure the cost of drawing the scene's objects.
+
+
+Each of the 17 scenarios runs on all three renderers, for **51 measurements**. A full suite takes about 13 minutes.
 
 One suite run goes like this:
 
 1. It measures `requestAnimationFrame` intervals for 2 s to estimate the display refresh rate.
 2. For each scenario, it computes the simulation once up front, at a fixed step of 60 states per second with the fixed seed `123456789`. All three renderers then replay the same states, so they draw identical traffic.
-3. Each renderer gets 3 s of warmup followed by 10 s of measurement.
+3. Each renderer gets 3 s of warmup followed by 10 s of measurement, in the order of the current run (see above). A renderer that has drawn fewer than 60 frames by then (e.g. DOM on the large maps) keeps recording until it has 60, but for at most 30 s in total. The precomputed states cover that longest case, so the traffic keeps moving. `snapshot.durationMs` and `snapshot.frameCount` show what was actually recorded; fewer than 60 frames means the renderer stayed under 2 FPS for the whole 30 s.
 4. At the end, the previous scenario and renderer are restored.
 
 Because the seed is fixed, `trace.stateHash` is the same for a given scenario on every machine and browser. You can use it to confirm that two measurements simulated the same thing.
@@ -69,21 +89,25 @@ A measurement with `frameCount` close to zero, or with `low1PercentFps` far belo
 
 ## JSON format
 
-The file is an array of results, one per scenario and renderer combination, ordered scenario by scenario and, within each scenario, `dom`, `pixi-webgl`, `pixi-webgpu`.
+The file is an array of results, one per scenario and renderer combination, ordered scenario by scenario and, within each scenario, in the order the renderers ran (`rendererOrder`).
 
 ```jsonc
 [
   {
-    "setup": { "id": "V-30x30-100", "name": "30x30 • 100 vehicles", "rows": 30, "columns": 30, "vehicleCount": 100 },
+    "setup": { "id": "V-30x30-100", "name": "30x30 • 100 vehicles", "rows": 30, "columns": 30, "vehicleCount": 100, "trafficLightTimers": true },
     "renderer": "pixi-webgl",
+    "rendererOrder": ["dom", "pixi-webgl", "pixi-webgpu"],
+    "rendererPosition": 2,
     "status": "complete",
     "snapshot": { /* metrics, see below */ },
-    "trace": { "stateHash": "477ef3e9", "statesPerSecond": 60, "stateCount": 901, "averageStepTime": 0.14, "p95StepTime": 1 },
+    "trace": { "stateHash": "ed12fa28", "statesPerSecond": 60, "stateCount": 2101, "averageStepTime": 0.14, "p95StepTime": 1 },
     "reason": null
   },
   {
     "setup": { "id": "V-30x30-100", /* ... */ },
     "renderer": "pixi-webgpu",
+    "rendererOrder": ["dom", "pixi-webgl", "pixi-webgpu"],
+    "rendererPosition": 3,
     "status": "skipped",
     "snapshot": null,
     "reason": "pixi-webgpu is unavailable."
@@ -95,8 +119,10 @@ The file is an array of results, one per scenario and renderer combination, orde
 
 | Field | Type | Description |
 |---|---|---|
-| `setup` | object | The scenario: `id`, `name`, `rows`, `columns`, `vehicleCount`. Standard scenario IDs have the form `{group}-{rows}x{columns}-{vehicles}`. |
+| `setup` | object | The scenario: `id`, `name`, `rows`, `columns`, `vehicleCount`, `trafficLightTimers`. Standard scenario IDs have the form `{group}-{rows}x{columns}-{vehicles}`, with a `-notimers` suffix when `trafficLightTimers` is `false`. |
 | `renderer` | string | `dom`, `pixi-webgl` or `pixi-webgpu` |
+| `rendererOrder` | string[] | The order the renderers ran in within every scenario of this suite run |
+| `rendererPosition` | number | This renderer's place in `rendererOrder`, starting at 1 |
 | `status` | string | `complete`: measured; `skipped`: renderer unavailable; `failed`: error during preparation or measurement |
 | `snapshot` | object \| `null` | The metrics; `null` unless the status is `complete` |
 | `trace` | object | Information about the precomputed simulation; present only when the status is `complete` |
@@ -136,14 +162,15 @@ All times are in milliseconds. `average*` is the mean and `p95*` the 95th percen
 | `userAgent` | Browser user agent |
 | `screenWidth`, `screenHeight`, `devicePixelRatio` | Screen |
 | `viewportWidth`, `viewportHeight` | Size of the simulation area in CSS pixels |
-| `gpuName` | GPU name reported by WebGL / WebGPU (Firefox may generalize it and append `or similar`) |
+| `gpuName` | GPU name reported by the renderer's own WebGL / WebGPU context. DOM has no context of its own, so its name comes from a separate WebGL probe. `null` when the context does not report a name, e.g. WebGPU in Firefox, which returns empty adapter info. |
+| `pixiRendererName` | Renderer PixiJS actually created (`app.renderer.name`): `webgl` or `webgpu`; `null` for DOM. |
 | `refreshRateEstimate` | Estimated display refresh rate in Hz, measured at the start of the suite |
 
 ### `trace`
 
 | Field | Description |
 |---|---|
-| `stateHash` | Hash of all precomputed states. The same scenario with the same seed gives the same hash |
+| `stateHash` | Hash of all precomputed states. The same scenario with the same seed and the same `stateCount` gives the same hash; compare only within one `codeVersion` |
 | `statesPerSecond` | Simulation states per second (60) |
 | `stateCount` | Total number of precomputed states |
 | `averageStepTime`, `p95StepTime` | Duration of one simulation step while the states were generated |

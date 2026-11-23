@@ -43,7 +43,7 @@ interface TrafficLightRenderObject {
     red: LampRenderObject;
     yellow: LampRenderObject;
     green: LampRenderObject;
-    timer: Text;
+    timer: Text | null;
     lastColor: TrafficLightRenderState['color'] | null;
     lastTimerText: string;
 }
@@ -114,6 +114,7 @@ export class PixiRenderer implements Renderer {
     private readonly preference: 'webgl' | 'webgpu';
 
     private app!: Application;
+    private appDestroyed = false;
     private scene!: Container;
     private world!: Container;
     private roadsLayer!: Container;
@@ -123,6 +124,9 @@ export class PixiRenderer implements Renderer {
 
     private initialized = false;
     private renderedRoadMap: RoadMap | null = null;
+
+    private trafficLightTimersVisible = true;
+    private trafficLightsStale = false;
 
     private webGl: WebGL2RenderingContext | null = null;
     private webGlTimerExtension: WebGLTimerExtension | null = null;
@@ -190,6 +194,7 @@ export class PixiRenderer implements Renderer {
         const resolution = Math.min(Math.max(devicePixelRatio, 1), 2);
 
         this.app = new Application();
+        this.appDestroyed = false;
 
         const webGpu = this.preference === 'webgpu' ? await requestWebGpuDevice() : null;
 
@@ -275,6 +280,8 @@ export class PixiRenderer implements Renderer {
             this.buildTrafficLights(state.trafficLights);
             this.renderedRoadMap = state.roadMap;
             this.resizeViewport();
+        } else if (this.trafficLightsStale) {
+            this.buildTrafficLights(state.trafficLights);
         }
 
         this.updateTrafficLights(state.trafficLights);
@@ -345,6 +352,10 @@ export class PixiRenderer implements Renderer {
 
     getGpuName(): string | null {
         return this.gpuName;
+    }
+
+    getPixiRendererName(): string | null {
+        return this.initialized ? this.app.renderer.name : null;
     }
 
     resetGpuTiming(): void {
@@ -840,8 +851,14 @@ export class PixiRenderer implements Renderer {
     }
 
     private buildTrafficLights(states: readonly TrafficLightRenderState[]): void {
-        this.trafficLightsLayer.removeChildren();
+        // Destroy the old lights
+        // Shared sprite textures are kept, destroy() leaves textures alone by default.
+        for (const child of this.trafficLightsLayer.removeChildren()) {
+            child.destroy({ children: true });
+        }
+
         this.trafficLightElements.clear();
+        this.trafficLightsStale = false;
 
         for (const state of states) {
             const elements = this.createTrafficLight(state);
@@ -873,18 +890,6 @@ export class PixiRenderer implements Renderer {
             TRAFFIC_LIGHT_HEIGHT / 2 - TRAFFIC_LIGHT_PADDING - LAMP_SIZE,
         );
 
-        const timer = new Text({
-            text: '',
-            style: {
-                fontFamily: 'Arial, sans-serif',
-                fontSize: 10,
-                fill: 0xe5e7eb,
-            },
-        });
-
-        timer.anchor.set(0, 0.5);
-        timer.position.set(TRAFFIC_LIGHT_WIDTH / 2 + TRAFFIC_LIGHT_TIMER_OFFSET, 0);
-
         root.addChild(
             housing,
             red.glowOuter,
@@ -899,8 +904,13 @@ export class PixiRenderer implements Renderer {
             red.lamp,
             yellow.lamp,
             green.lamp,
-            timer,
         );
+
+        const timer = this.trafficLightTimersVisible ? this.createTrafficLightTimer() : null;
+
+        if (timer) {
+            root.addChild(timer);
+        }
 
         const object: TrafficLightRenderObject = {
             root,
@@ -916,6 +926,22 @@ export class PixiRenderer implements Renderer {
         this.updateTrafficLightObject(object, state);
 
         return object;
+    }
+
+    private createTrafficLightTimer(): Text {
+        const timer = new Text({
+            text: '',
+            style: {
+                fontFamily: 'Arial, sans-serif',
+                fontSize: 10,
+                fill: 0xe5e7eb,
+            },
+        });
+
+        timer.anchor.set(0, 0.5);
+        timer.position.set(TRAFFIC_LIGHT_WIDTH / 2 + TRAFFIC_LIGHT_TIMER_OFFSET, 0);
+
+        return timer;
     }
 
     private createLamp(texture: Texture, y: number): LampRenderObject {
@@ -997,6 +1023,10 @@ export class PixiRenderer implements Renderer {
             this.setGlowState(elements.green, state.color === 'green', GREEN_COLOR);
 
             elements.lastColor = state.color;
+        }
+
+        if (!elements.timer) {
+            return;
         }
 
         const timerText = `${(state.remainingTime / 1000).toFixed(1)}s`;
@@ -1218,6 +1248,15 @@ export class PixiRenderer implements Renderer {
         this.resizeObserver.observe(this.container);
     }
 
+    setTrafficLightTimersVisible(visible: boolean): void {
+        if (visible === this.trafficLightTimersVisible) {
+            return;
+        }
+
+        this.trafficLightTimersVisible = visible;
+        this.trafficLightsStale = true;
+    }
+
     destroy(): void {
         this.resizeObserver?.disconnect();
         this.resizeObserver = undefined;
@@ -1255,24 +1294,36 @@ export class PixiRenderer implements Renderer {
         this.webGpuTimer = null;
         this.gpuName = null;
 
-        if (this.app) {
-            this.app.destroy(true, {
-                children: true,
-                texture: false,
-            });
+        try {
+            if (this.app && !this.appDestroyed) {
+                // Marked first: if Pixi throws midway, destroying the half-destroyed app
+                // again would make every later run fail as well.
+                this.appDestroyed = true;
+
+                // An object, not `true`: `true` also clears Pixi's global TexturePool, which the
+                // other Pixi renderer still holds text textures from. Returning one of those
+                // later then throws, because its pool entry is gone.
+                this.app.destroy(
+                    { removeView: true },
+                    {
+                        children: true,
+                        texture: false,
+                    },
+                );
+            }
+        } finally {
+            // Pixi leaves a device it was handed alone, so it is ours to destroy.
+            this.webGpuDevice?.destroy();
+            this.webGpuDevice = null;
+
+            this.container.replaceChildren();
+
+            this.initialized = false;
+            this.renderedRoadMap = null;
+            this.cameraX = 0;
+            this.cameraY = 0;
+            this.viewportWidth = 1;
+            this.viewportHeight = 1;
         }
-
-        // Pixi leaves a device it was handed alone, so it is ours to destroy.
-        this.webGpuDevice?.destroy();
-        this.webGpuDevice = null;
-
-        this.container.replaceChildren();
-
-        this.initialized = false;
-        this.renderedRoadMap = null;
-        this.cameraX = 0;
-        this.cameraY = 0;
-        this.viewportWidth = 1;
-        this.viewportHeight = 1;
     }
 }

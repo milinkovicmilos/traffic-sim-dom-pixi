@@ -21,5 +21,6 @@ export interface RenderState {
 export interface Renderer {
     initialize(): void | Promise<void>;
     render(state: RenderState): void;
+    setTrafficLightTimersVisible(visible: boolean): void;
     destroy(): void;
 }

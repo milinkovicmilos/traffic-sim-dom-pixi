@@ -20,6 +20,7 @@ export interface BenchmarkEnvironment {
     viewportWidth: number;
     viewportHeight: number;
     gpuName: string | null;
+    pixiRendererName: string | null;
     refreshRateEstimate: number | null;
 }
 
@@ -28,6 +29,7 @@ export interface BenchmarkEnvironmentContext {
     viewportWidth: number;
     viewportHeight: number;
     gpuName: string | null;
+    pixiRendererName: string | null;
 }
 
 export interface BenchmarkRunLabel {
@@ -130,6 +132,10 @@ export class BenchmarkMonitor {
         this.currentMemoryMb = this.readMemoryMb();
     }
 
+    getRecordedFrameCount(): number {
+        return this.recordingSamples.length;
+    }
+
     isRecording(): boolean {
         return this.recording;
     }
@@ -199,6 +205,7 @@ export class BenchmarkMonitor {
             viewportWidth: context.viewportWidth,
             viewportHeight: context.viewportHeight,
             gpuName: context.gpuName,
+            pixiRendererName: context.pixiRendererName,
             refreshRateEstimate: this.refreshRateEstimate,
         };
     }

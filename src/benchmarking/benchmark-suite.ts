@@ -3,12 +3,15 @@ import type { BenchmarkMonitor, BenchmarkSnapshot } from './benchmark-monitor';
 import type { BenchmarkSuiteConfig } from './benchmark-suite-config';
 import type { SimulationTraceInfo } from './simulation-trace';
 
+const FRAME_COUNT_POLL_MS = 50;
+
 export interface BenchmarkSuiteSetup {
     id: string;
     name: string;
     rows: number;
     columns: number;
     vehicleCount: number;
+    trafficLightTimers: boolean;
 }
 
 export type BenchmarkSuiteRunStatus = 'complete' | 'skipped' | 'failed';
@@ -16,6 +19,8 @@ export type BenchmarkSuiteRunStatus = 'complete' | 'skipped' | 'failed';
 export interface BenchmarkSuiteRunResult {
     setup: BenchmarkSuiteSetup;
     renderer: RendererType;
+    rendererOrder: RendererType[];
+    rendererPosition: number;
     status: BenchmarkSuiteRunStatus;
     snapshot: BenchmarkSnapshot | null;
     trace?: SimulationTraceInfo;
@@ -75,11 +80,15 @@ export class BenchmarkSuiteRunner {
         const runLabel = { suiteId: config.id, runIndex: options.runIndex };
         const totalRuns = config.setups.length * config.renderers.length;
 
+        const rendererOrder = [...config.renderers];
+
         let completedRuns = 0;
 
         try {
             for (const setup of config.setups) {
-                for (const renderer of config.renderers) {
+                for (const [rendererIndex, renderer] of config.renderers.entries()) {
+                    const rendererPosition = rendererIndex + 1;
+
                     options.onProgress?.({
                         completedRuns,
                         totalRuns,
@@ -95,12 +104,14 @@ export class BenchmarkSuiteRunner {
                             setup,
                             renderer,
                             config.seed,
-                            config.warmupMs + config.durationMs,
+                            config.warmupMs + config.maxDurationMs,
                         );
                     } catch (error) {
                         results.push({
                             setup,
                             renderer,
+                            rendererOrder,
+                            rendererPosition,
                             status: 'failed',
                             snapshot: null,
                             reason: getErrorMessage(error),
@@ -114,6 +125,8 @@ export class BenchmarkSuiteRunner {
                         results.push({
                             setup,
                             renderer,
+                            rendererOrder,
+                            rendererPosition,
                             status: 'skipped',
                             snapshot: null,
                             reason: `${renderer} is unavailable.`,
@@ -146,7 +159,7 @@ export class BenchmarkSuiteRunner {
                     try {
                         this.monitor.startRecording(renderer);
 
-                        await wait(config.durationMs);
+                        await this.record(config);
 
                         const snapshot = this.monitor.stopRecording(
                             renderer,
@@ -159,6 +172,8 @@ export class BenchmarkSuiteRunner {
                         results.push({
                             setup,
                             renderer,
+                            rendererOrder,
+                            rendererPosition,
                             status: 'complete',
                             // A replayed frame runs no simulation, so its cost comes from the trace.
                             snapshot: {
@@ -186,6 +201,8 @@ export class BenchmarkSuiteRunner {
                         results.push({
                             setup,
                             renderer,
+                            rendererOrder,
+                            rendererPosition,
                             status: 'failed',
                             snapshot: null,
                             reason: getErrorMessage(error),
@@ -205,6 +222,22 @@ export class BenchmarkSuiteRunner {
         }
     }
 
+    private async record(config: BenchmarkSuiteConfig): Promise<void> {
+        const startedAt = performance.now();
+
+        await wait(config.durationMs);
+
+        while (this.monitor.getRecordedFrameCount() < config.minFrameCount) {
+            const remainingMs = config.maxDurationMs - (performance.now() - startedAt);
+
+            if (remainingMs <= 0) {
+                break;
+            }
+
+            await wait(Math.min(FRAME_COUNT_POLL_MS, remainingMs));
+        }
+    }
+
     private validateConfig(config: BenchmarkSuiteConfig): void {
         if (!Number.isInteger(config.seed) || config.seed < 0) {
             throw new Error('Benchmark suite seed must be a non-negative integer.');
@@ -212,6 +245,16 @@ export class BenchmarkSuiteRunner {
 
         if (!Number.isInteger(config.warmupMs) || config.warmupMs < 0) {
             throw new Error('Benchmark warmup duration must be a non-negative integer.');
+        }
+
+        if (!Number.isInteger(config.minFrameCount) || config.minFrameCount < 0) {
+            throw new Error('Benchmark minimum frame count must be a non-negative integer.');
+        }
+
+        if (!Number.isInteger(config.maxDurationMs) || config.maxDurationMs < config.durationMs) {
+            throw new Error(
+                'Benchmark maximum recording duration must be an integer no shorter than the recording duration.',
+            );
         }
 
         if (!Number.isInteger(config.durationMs) || config.durationMs <= 0) {

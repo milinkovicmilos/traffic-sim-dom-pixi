@@ -215,9 +215,6 @@ body {
     height: 8px;
     border-radius: 50%;
     opacity: 0.18;
-    transition:
-        opacity 80ms linear,
-        box-shadow 80ms linear;
 }
 
 .traffic-light-lamp.is-active {
@@ -620,6 +617,7 @@ body {
         90px
         90px
         100px
+        48px
         auto;
     align-items: end;
     gap: 8px;
@@ -627,6 +625,15 @@ body {
     background: #0f172a;
     border: 1px solid #1e293b;
     border-radius: 8px;
+}
+
+.benchmark-config-checkbox input {
+    width: 16px;
+    height: 30px;
+    margin: 0;
+    padding: 0;
+    accent-color: #64748b;
+    cursor: pointer;
 }
 
 .benchmark-setup-index {
@@ -771,6 +778,10 @@ body {
 
     .benchmark-setup-row .benchmark-config-field input {
         width: 100%;
+    }
+
+    .benchmark-setup-row .benchmark-config-checkbox input {
+        width: 16px;
     }
 
     .benchmark-remove-setup {
