@@ -3,6 +3,8 @@ import type { BenchmarkMonitor, BenchmarkSnapshot } from './benchmark-monitor';
 import type { BenchmarkSuiteConfig } from './benchmark-suite-config';
 import type { SimulationTraceInfo } from './simulation-trace';
 
+const FRAME_COUNT_POLL_MS = 50;
+
 export interface BenchmarkSuiteSetup {
     id: string;
     name: string;
@@ -102,7 +104,7 @@ export class BenchmarkSuiteRunner {
                             setup,
                             renderer,
                             config.seed,
-                            config.warmupMs + config.durationMs,
+                            config.warmupMs + config.maxDurationMs,
                         );
                     } catch (error) {
                         results.push({
@@ -157,7 +159,7 @@ export class BenchmarkSuiteRunner {
                     try {
                         this.monitor.startRecording(renderer);
 
-                        await wait(config.durationMs);
+                        await this.record(config);
 
                         const snapshot = this.monitor.stopRecording(
                             renderer,
@@ -220,6 +222,22 @@ export class BenchmarkSuiteRunner {
         }
     }
 
+    private async record(config: BenchmarkSuiteConfig): Promise<void> {
+        const startedAt = performance.now();
+
+        await wait(config.durationMs);
+
+        while (this.monitor.getRecordedFrameCount() < config.minFrameCount) {
+            const remainingMs = config.maxDurationMs - (performance.now() - startedAt);
+
+            if (remainingMs <= 0) {
+                break;
+            }
+
+            await wait(Math.min(FRAME_COUNT_POLL_MS, remainingMs));
+        }
+    }
+
     private validateConfig(config: BenchmarkSuiteConfig): void {
         if (!Number.isInteger(config.seed) || config.seed < 0) {
             throw new Error('Benchmark suite seed must be a non-negative integer.');
@@ -227,6 +245,16 @@ export class BenchmarkSuiteRunner {
 
         if (!Number.isInteger(config.warmupMs) || config.warmupMs < 0) {
             throw new Error('Benchmark warmup duration must be a non-negative integer.');
+        }
+
+        if (!Number.isInteger(config.minFrameCount) || config.minFrameCount < 0) {
+            throw new Error('Benchmark minimum frame count must be a non-negative integer.');
+        }
+
+        if (!Number.isInteger(config.maxDurationMs) || config.maxDurationMs < config.durationMs) {
+            throw new Error(
+                'Benchmark maximum recording duration must be an integer no shorter than the recording duration.',
+            );
         }
 
         if (!Number.isInteger(config.durationMs) || config.durationMs <= 0) {

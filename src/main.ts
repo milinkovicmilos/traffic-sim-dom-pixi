@@ -8,6 +8,8 @@ import {
     type BenchmarkSuiteSetup,
 } from '@benchmarking/benchmark-suite';
 import {
+    MAX_RECORDING_MS,
+    MIN_RECORDED_FRAMES,
     rotateRenderers,
     standardBenchmarkSuite,
     type BenchmarkSuiteConfig,
@@ -84,6 +86,8 @@ let customBenchmarkSuiteConfig: BenchmarkSuiteConfig = {
     seed: generateRandomSeed(),
     warmupMs: 3000,
     durationMs: 10000,
+    minFrameCount: MIN_RECORDED_FRAMES,
+    maxDurationMs: MAX_RECORDING_MS,
     renderers: ['dom', 'pixi-webgl', 'pixi-webgpu'],
     setups: [
         {
@@ -569,6 +573,8 @@ function readBenchmarkSuiteConfigFromUi(): BenchmarkSuiteConfig {
         seed: currentSimulationSeed,
         warmupMs,
         durationMs,
+        minFrameCount: MIN_RECORDED_FRAMES,
+        maxDurationMs: Math.max(durationMs, MAX_RECORDING_MS),
         renderers,
         setups: readBenchmarkSetupsFromUi(),
     };

@@ -132,6 +132,10 @@ export class BenchmarkMonitor {
         this.currentMemoryMb = this.readMemoryMb();
     }
 
+    getRecordedFrameCount(): number {
+        return this.recordingSamples.length;
+    }
+
     isRecording(): boolean {
         return this.recording;
     }

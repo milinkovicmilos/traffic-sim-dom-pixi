@@ -3,6 +3,9 @@ import type { BenchmarkSuiteSetup } from './benchmark-suite';
 
 const STANDARD_BENCHMARK_SEED = 123456789;
 
+export const MIN_RECORDED_FRAMES = 60;
+export const MAX_RECORDING_MS = 30000;
+
 // V: vehicle count scaling on a fixed map.
 const VEHICLE_GROUP_MAP_SIZE = 30;
 const VEHICLE_GROUP_COUNTS = [100, 250, 500, 1000, 2000, 4000, 8000, 16000];
@@ -24,6 +27,8 @@ export interface BenchmarkSuiteConfig {
     seed: number;
     warmupMs: number;
     durationMs: number;
+    minFrameCount: number;
+    maxDurationMs: number;
     renderers: RendererType[];
     setups: BenchmarkSuiteSetup[];
 }
@@ -68,6 +73,8 @@ export const standardBenchmarkSuite: BenchmarkSuiteConfig = {
     seed: STANDARD_BENCHMARK_SEED,
     warmupMs: 3000,
     durationMs: 10000,
+    minFrameCount: MIN_RECORDED_FRAMES,
+    maxDurationMs: MAX_RECORDING_MS,
     renderers: ['dom', 'pixi-webgl', 'pixi-webgpu'],
     setups: [
         ...VEHICLE_GROUP_COUNTS.map((vehicleCount) =>

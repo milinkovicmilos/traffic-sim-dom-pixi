@@ -68,13 +68,13 @@ The standard suite is defined in `src/benchmarking/benchmark-suite-config.ts`:
 "Timers off" means the traffic lights are drawn and change color, but without the countdown text. Text is expensive to render and would dominate small scenes, so without it groups `S` and `P` mostly measure the cost of drawing the scene's objects.
 
 
-Each of the 17 scenarios runs on all three renderers, for **51 measurements**. A full suite takes about 12 minutes.
+Each of the 17 scenarios runs on all three renderers, for **51 measurements**. A full suite takes about 13 minutes.
 
 One suite run goes like this:
 
 1. It measures `requestAnimationFrame` intervals for 2 s to estimate the display refresh rate.
 2. For each scenario, it computes the simulation once up front, at a fixed step of 60 states per second with the fixed seed `123456789`. All three renderers then replay the same states, so they draw identical traffic.
-3. Each renderer gets 3 s of warmup followed by 10 s of measurement, in the order of the current run (see above).
+3. Each renderer gets 3 s of warmup followed by 10 s of measurement, in the order of the current run (see above). A renderer that has drawn fewer than 60 frames by then (e.g. DOM on the large maps) keeps recording until it has 60, but for at most 30 s in total. The precomputed states cover that longest case, so the traffic keeps moving. `snapshot.durationMs` and `snapshot.frameCount` show what was actually recorded; fewer than 60 frames means the renderer stayed under 2 FPS for the whole 30 s.
 4. At the end, the previous scenario and renderer are restored.
 
 Because the seed is fixed, `trace.stateHash` is the same for a given scenario on every machine and browser. You can use it to confirm that two measurements simulated the same thing.
