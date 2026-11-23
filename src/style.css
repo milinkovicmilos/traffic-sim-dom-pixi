@@ -215,9 +215,6 @@ body {
     height: 8px;
     border-radius: 50%;
     opacity: 0.18;
-    transition:
-        opacity 80ms linear,
-        box-shadow 80ms linear;
 }
 
 .traffic-light-lamp.is-active {
