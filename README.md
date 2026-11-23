@@ -100,7 +100,7 @@ The file is an array of results, one per scenario and renderer combination, orde
     "rendererPosition": 2,
     "status": "complete",
     "snapshot": { /* metrics, see below */ },
-    "trace": { "stateHash": "477ef3e9", "statesPerSecond": 60, "stateCount": 901, "averageStepTime": 0.14, "p95StepTime": 1 },
+    "trace": { "stateHash": "ed12fa28", "statesPerSecond": 60, "stateCount": 2101, "averageStepTime": 0.14, "p95StepTime": 1 },
     "reason": null
   },
   {
@@ -170,7 +170,7 @@ All times are in milliseconds. `average*` is the mean and `p95*` the 95th percen
 
 | Field | Description |
 |---|---|
-| `stateHash` | Hash of all precomputed states. The same scenario with the same seed gives the same hash |
+| `stateHash` | Hash of all precomputed states. The same scenario with the same seed and the same `stateCount` gives the same hash; compare only within one `codeVersion` |
 | `statesPerSecond` | Simulation states per second (60) |
 | `stateCount` | Total number of precomputed states |
 | `averageStepTime`, `p95StepTime` | Duration of one simulation step while the states were generated |
