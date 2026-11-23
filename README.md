@@ -142,7 +142,8 @@ All times are in milliseconds. `average*` is the mean and `p95*` the 95th percen
 | `userAgent` | Browser user agent |
 | `screenWidth`, `screenHeight`, `devicePixelRatio` | Screen |
 | `viewportWidth`, `viewportHeight` | Size of the simulation area in CSS pixels |
-| `gpuName` | GPU name reported by WebGL / WebGPU (Firefox may generalize it and append `or similar`) |
+| `gpuName` | GPU name reported by the renderer's own WebGL / WebGPU context. DOM has no context of its own, so its name comes from a separate WebGL probe. `null` when the context does not report a name, e.g. WebGPU in Firefox, which returns empty adapter info. |
+| `pixiRendererName` | Renderer PixiJS actually created (`app.renderer.name`): `webgl` or `webgpu`; `null` for DOM. |
 | `refreshRateEstimate` | Estimated display refresh rate in Hz, measured at the start of the suite |
 
 ### `trace`

@@ -119,7 +119,11 @@ for (const host of Object.values(rendererHosts)) {
 const benchmarkMonitor = new BenchmarkMonitor(() => ({
     viewportWidth: elements.simulationViewport.clientWidth,
     viewportHeight: elements.simulationViewport.clientHeight,
-    gpuName: getActiveGpuRenderer().getGpuName?.() ?? getProbedGpuName(),
+    gpuName:
+        activeRendererType === 'dom'
+            ? getProbedGpuName()
+            : (getActiveGpuRenderer().getGpuName?.() ?? null),
+    pixiRendererName: getActiveGpuRenderer().getPixiRendererName?.() ?? null,
 }));
 const benchmarkUi = new BenchmarkUi(elements, () => benchmarkMonitor.getEnvironment());
 
@@ -166,6 +170,7 @@ interface RendererWithGpuTiming {
     consumeGpuTime?(): number | null;
     resetGpuTiming?(): void;
     getGpuName?(): string | null;
+    getPixiRendererName?(): string | null;
 }
 
 // DOM has no GPU context of its own, so probe once with a throwaway WebGL canvas.

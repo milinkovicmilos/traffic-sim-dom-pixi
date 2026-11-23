@@ -352,6 +352,10 @@ export class PixiRenderer implements Renderer {
         return this.gpuName;
     }
 
+    getPixiRendererName(): string | null {
+        return this.initialized ? this.app.renderer.name : null;
+    }
+
     resetGpuTiming(): void {
         this.resetWebGlTiming();
         this.webGpuTimer?.reset();

@@ -454,6 +454,7 @@ export class BenchmarkUi {
                         : `${environment.deviceMemoryGb} GB`,
                 )}
                 ${metric('GPU', environment.gpuName ?? 'N/A')}
+                ${metric('Pixi Renderer', environment.pixiRendererName ?? 'N/A')}
                 ${metric(
                     'Screen',
                     `${environment.screenWidth} × ${environment.screenHeight} @${environment.devicePixelRatio}x`,
