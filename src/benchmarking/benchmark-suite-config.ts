@@ -20,7 +20,7 @@ const SMALL_GROUP_VEHICLE_COUNT = 100;
 
 // P: vehicle count scaling on a small map, without traffic-light timers.
 const SMALL_MAP_GROUP_SIZE = 10;
-const SMALL_MAP_GROUP_COUNTS = [100, 250, 500];
+const SMALL_MAP_GROUP_COUNTS = [25, 50, 100, 250, 500];
 
 export interface BenchmarkSuiteConfig {
     id: string;

@@ -86,12 +86,12 @@ The standard suite is defined in `src/benchmarking/benchmark-suite-config.ts`:
 | `V` (vehicle count scaling) | 30×30 | 100, 250, 500, 1000, 2000, 4000, 8000, 16000 | on |
 | `M` (map size scaling) | 10×10, 20×20, 40×40, 60×60 | 1000 | on |
 | `S` (small scenarios) | 5×5, 10×10 | 100 | off |
-| `P` (vehicle count scaling on a small map) | 10×10 | 100, 250, 500 | off |
+| `P` (vehicle count scaling on a small map) | 10×10 | 25, 50, 100, 250, 500 | off |
 
 "Timers off" means the traffic lights are drawn and change color, but without the countdown text. Text is expensive to render and would dominate small scenes, so without it groups `S` and `P` mostly measure the cost of drawing the scene's objects.
 
 
-Each of the 17 scenarios runs on all four renderers, for **68 measurements**. A full suite takes about 17 minutes.
+Each of the 19 scenarios runs on all four renderers, for **76 measurements**. A full suite takes about 19 minutes.
 
 One suite run goes like this:
 
