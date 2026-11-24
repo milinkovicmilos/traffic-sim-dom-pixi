@@ -1,3 +1,4 @@
+import type { StaticElementCounts } from '@rendering/renderer';
 import type { RendererType } from '@rendering/renderer-factory';
 import { average, percentile } from '@shared/utils/math/statistics';
 
@@ -67,6 +68,7 @@ export interface BenchmarkSnapshot {
     vehicleCount: number;
     rows: number;
     columns: number;
+    staticElements: StaticElementCounts | null;
     environment: BenchmarkEnvironment;
 }
 
@@ -98,6 +100,7 @@ interface NavigatorWithDeviceMemory extends Navigator {
 
 export class BenchmarkMonitor {
     private readonly getEnvironmentContext: () => BenchmarkEnvironmentContext;
+    private readonly getStaticElementCounts: () => StaticElementCounts | null;
     private refreshRateEstimate: number | null = null;
     private recording = false;
     private recordingRenderer: RendererType | null = null;
@@ -127,8 +130,12 @@ export class BenchmarkMonitor {
         frameCount: 0,
     };
 
-    constructor(getEnvironmentContext: () => BenchmarkEnvironmentContext) {
+    constructor(
+        getEnvironmentContext: () => BenchmarkEnvironmentContext,
+        getStaticElementCounts: () => StaticElementCounts | null,
+    ) {
         this.getEnvironmentContext = getEnvironmentContext;
+        this.getStaticElementCounts = getStaticElementCounts;
         this.currentMemoryMb = this.readMemoryMb();
     }
 
@@ -347,6 +354,7 @@ export class BenchmarkMonitor {
             vehicleCount,
             rows,
             columns,
+            staticElements: this.getStaticElementCounts(),
             environment: this.getEnvironment(),
         };
 

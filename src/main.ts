@@ -88,7 +88,7 @@ let customBenchmarkSuiteConfig: BenchmarkSuiteConfig = {
     durationMs: 10000,
     minFrameCount: MIN_RECORDED_FRAMES,
     maxDurationMs: MAX_RECORDING_MS,
-    renderers: ['dom', 'pixi-webgl', 'pixi-webgpu'],
+    renderers: ['dom', 'dom-cull', 'pixi-webgl', 'pixi-webgpu'],
     setups: [
         {
             id: 'setup-1',
@@ -111,6 +111,7 @@ const elements = renderApp(app, gridConfig.rows, gridConfig.columns, vehiclesCon
 
 const rendererHosts: Record<RendererType, HTMLDivElement> = {
     dom: elements.domRendererHost,
+    'dom-cull': elements.domCullRendererHost,
     'pixi-webgl': elements.pixiWebglRendererHost,
     'pixi-webgpu': elements.pixiWebgpuRendererHost,
 };
@@ -121,15 +122,18 @@ for (const host of Object.values(rendererHosts)) {
     host.style.display = 'none';
 }
 
-const benchmarkMonitor = new BenchmarkMonitor(() => ({
-    viewportWidth: elements.simulationViewport.clientWidth,
-    viewportHeight: elements.simulationViewport.clientHeight,
-    gpuName:
-        activeRendererType === 'dom'
-            ? getProbedGpuName()
-            : (getActiveGpuRenderer().getGpuName?.() ?? null),
-    pixiRendererName: getActiveGpuRenderer().getPixiRendererName?.() ?? null,
-}));
+const benchmarkMonitor = new BenchmarkMonitor(
+    () => ({
+        viewportWidth: elements.simulationViewport.clientWidth,
+        viewportHeight: elements.simulationViewport.clientHeight,
+        gpuName:
+            activeRendererType === 'dom' || activeRendererType === 'dom-cull'
+                ? getProbedGpuName()
+                : (getActiveGpuRenderer().getGpuName?.() ?? null),
+        pixiRendererName: getActiveGpuRenderer().getPixiRendererName?.() ?? null,
+    }),
+    () => activeRenderer.getStaticElementCounts(),
+);
 const benchmarkUi = new BenchmarkUi(elements, () => benchmarkMonitor.getEnvironment());
 
 let simulation = new Simulation(createSimulationConfig());
@@ -202,6 +206,13 @@ const rendererOptions: RendererOptions = {
         vehicleLength: vehiclesConfig.length,
         vehicleWidth: vehiclesConfig.width,
     },
+    domCull: {
+        container: elements.domCullRendererHost,
+        padding: gridConfig.padding,
+        roadWidth: gridConfig.roadWidth,
+        vehicleLength: vehiclesConfig.length,
+        vehicleWidth: vehiclesConfig.width,
+    },
     pixiWebgl: {
         container: elements.pixiWebglRendererHost,
         padding: gridConfig.padding,
@@ -222,6 +233,7 @@ const rendererOptions: RendererOptions = {
 
 const renderers: Record<RendererType, Renderer> = {
     dom: createRenderer('dom', rendererOptions),
+    'dom-cull': createRenderer('dom-cull', rendererOptions),
     'pixi-webgl': createRenderer('pixi-webgl', rendererOptions),
     'pixi-webgpu': createRenderer('pixi-webgpu', rendererOptions),
 };

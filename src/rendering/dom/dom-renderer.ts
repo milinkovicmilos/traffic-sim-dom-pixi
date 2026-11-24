@@ -1,7 +1,18 @@
 import type { Road } from '@core/map/road';
 import type { RoadMap } from '@core/map/road-map';
 import type { VehicleState } from '@core/vehicles/vehicle-state';
-import type { Renderer, RenderState, TrafficLightRenderState } from '@rendering/renderer';
+import type {
+    Renderer,
+    RenderState,
+    StaticElementCounts,
+    TrafficLightRenderState,
+} from '@rendering/renderer';
+import {
+    getStaticChunkCell,
+    isStaticChunkVisible,
+    type CullViewport,
+    type StaticChunkBounds,
+} from '@rendering/static-chunks';
 
 export interface DOMRendererOptions {
     container: HTMLElement;
@@ -9,6 +20,23 @@ export interface DOMRendererOptions {
     roadWidth: number;
     vehicleLength: number;
     vehicleWidth: number;
+    // Hide static elements outside the viewport by the same chunk rule as the PixiJS renderer.
+    culling?: boolean;
+}
+
+/*
+ * One wrapper element per layer and chunk. Culling sets display: none on the wrappers,
+ * which takes their elements out of layout and paint.
+ */
+interface StaticChunk {
+    bounds: StaticChunkBounds;
+    roads: HTMLDivElement | null;
+    lanes: HTMLDivElement | null;
+    trafficLights: HTMLDivElement | null;
+    roadCount: number;
+    laneDividerCount: number;
+    trafficLightCount: number;
+    visible: boolean;
 }
 
 interface TrafficLightElements {
@@ -19,6 +47,8 @@ interface TrafficLightElements {
     timer: HTMLDivElement | null;
     lastColor: TrafficLightRenderState['color'] | null;
     lastTimerText: string;
+    // null when culling is off.
+    chunk: StaticChunk | null;
 }
 
 interface VehicleElement {
@@ -39,8 +69,10 @@ export class DOMRenderer implements Renderer {
     private readonly roadWidth: number;
     private readonly vehicleLength: number;
     private readonly vehicleWidth: number;
+    private readonly culling: boolean;
 
     private scene!: HTMLDivElement;
+    private sceneSizer: HTMLDivElement | null = null;
     private roadsLayer!: HTMLDivElement;
     private lanesLayer!: HTMLDivElement;
     private trafficLightsLayer!: HTMLDivElement;
@@ -48,6 +80,18 @@ export class DOMRenderer implements Renderer {
 
     private readonly trafficLightElements = new Map<string, TrafficLightElements>();
     private readonly vehicleElements: VehicleElement[] = [];
+    private readonly staticChunks = new Map<string, StaticChunk>();
+
+    private roadCount = 0;
+    private laneDividerCount = 0;
+
+    private mapMinX = 0;
+    private mapMinY = 0;
+
+    // Latest states, used to bring lights up to date when their chunk becomes visible.
+    private latestTrafficLights: readonly TrafficLightRenderState[] = [];
+
+    private resizeObserver?: ResizeObserver;
 
     private initialized = false;
 
@@ -62,6 +106,7 @@ export class DOMRenderer implements Renderer {
         this.roadWidth = options.roadWidth;
         this.vehicleLength = options.vehicleLength;
         this.vehicleWidth = options.vehicleWidth;
+        this.culling = options.culling ?? false;
     }
 
     initialize(): void {
@@ -82,6 +127,21 @@ export class DOMRenderer implements Renderer {
             this.vehiclesLayer,
         );
 
+        if (this.culling) {
+            // Hidden chunks leave layout, so they no longer stretch the scroll area.
+            // The sizer keeps it at the full scene size.
+            this.sceneSizer = this.createElement('scene-sizer');
+            this.scene.append(this.sceneSizer);
+
+            this.scene.addEventListener('scroll', this.handleScroll, { passive: true });
+
+            // Also covers the host being shown again after another renderer was active.
+            this.resizeObserver = new ResizeObserver(() => {
+                this.updateStaticChunkVisibility();
+            });
+            this.resizeObserver.observe(this.container);
+        }
+
         this.container.replaceChildren(this.scene);
         this.initialized = true;
     }
@@ -101,6 +161,7 @@ export class DOMRenderer implements Renderer {
             this.createTrafficLights(state.trafficLights);
         }
 
+        this.latestTrafficLights = state.trafficLights;
         this.updateTrafficLights(state.trafficLights);
         this.updateVehicles(state.vehicles);
     }
@@ -114,33 +175,256 @@ export class DOMRenderer implements Renderer {
         this.trafficLightsStale = true;
     }
 
+    getStaticElementCounts(): StaticElementCounts {
+        const trafficLights = this.trafficLightElements.size;
+
+        if (!this.culling) {
+            return {
+                roads: this.roadCount,
+                laneDividers: this.laneDividerCount,
+                trafficLights,
+                visibleRoads: this.roadCount,
+                visibleLaneDividers: this.laneDividerCount,
+                visibleTrafficLights: trafficLights,
+            };
+        }
+
+        const counts: StaticElementCounts = {
+            roads: this.roadCount,
+            laneDividers: this.laneDividerCount,
+            trafficLights,
+            visibleRoads: 0,
+            visibleLaneDividers: 0,
+            visibleTrafficLights: 0,
+        };
+
+        for (const chunk of this.staticChunks.values()) {
+            if (!chunk.visible) {
+                continue;
+            }
+
+            counts.visibleRoads += chunk.roadCount;
+            counts.visibleLaneDividers += chunk.laneDividerCount;
+            counts.visibleTrafficLights += chunk.trafficLightCount;
+        }
+
+        return counts;
+    }
+
     destroy(): void {
+        this.resizeObserver?.disconnect();
+        this.resizeObserver = undefined;
+        this.scene?.removeEventListener('scroll', this.handleScroll);
+
         this.vehicleElements.length = 0;
         this.trafficLightElements.clear();
+        this.staticChunks.clear();
+        this.latestTrafficLights = [];
+        this.sceneSizer = null;
+        this.roadCount = 0;
+        this.laneDividerCount = 0;
         this.container.replaceChildren();
         this.initialized = false;
         this.renderedRoadMap = null;
     }
 
+    // Same scene coordinates as the PixiJS renderer, so chunk keys match.
     private offsetX(x: number): number {
-        return x + this.padding;
+        return x - this.mapMinX + this.padding;
     }
 
     private offsetY(y: number): number {
-        return y + this.padding;
+        return y - this.mapMinY + this.padding;
     }
 
     private renderMap(roadMap: RoadMap): void {
         this.roadsLayer.replaceChildren();
         this.lanesLayer.replaceChildren();
+        this.staticChunks.clear();
+        this.roadCount = 0;
+        this.laneDividerCount = 0;
+
+        this.updateMapBounds(roadMap);
 
         for (const road of roadMap.getRoads()) {
-            this.renderRoad(road);
-            this.renderLaneDivider(road);
+            if (this.renderRoad(road)) {
+                this.roadCount += 1;
+            }
+
+            if (this.renderLaneDivider(road)) {
+                this.laneDividerCount += 1;
+            }
         }
     }
 
-    private renderRoad(road: Road): void {
+    private updateMapBounds(roadMap: RoadMap): void {
+        const nodes = roadMap.getNodes();
+
+        if (nodes.length === 0) {
+            this.mapMinX = 0;
+            this.mapMinY = 0;
+            this.updateSceneSizer(1, 1);
+            return;
+        }
+
+        let minX = Number.POSITIVE_INFINITY;
+        let minY = Number.POSITIVE_INFINITY;
+        let maxX = Number.NEGATIVE_INFINITY;
+        let maxY = Number.NEGATIVE_INFINITY;
+
+        for (const node of nodes) {
+            const position = node.getPosition();
+
+            minX = Math.min(minX, position.x);
+            minY = Math.min(minY, position.y);
+            maxX = Math.max(maxX, position.x);
+            maxY = Math.max(maxY, position.y);
+        }
+
+        this.mapMinX = minX;
+        this.mapMinY = minY;
+        this.updateSceneSizer(maxX - minX + this.padding * 2, maxY - minY + this.padding * 2);
+    }
+
+    private updateSceneSizer(width: number, height: number): void {
+        if (!this.sceneSizer) {
+            return;
+        }
+
+        this.sceneSizer.style.width = `${width}px`;
+        this.sceneSizer.style.height = `${height}px`;
+    }
+
+    /*
+     * Returns the parent for a static element at (x, y) in scene coordinates:
+     * the layer itself without culling, otherwise the layer's wrapper for that chunk.
+     */
+    private getStaticParent(
+        layer: 'roads' | 'lanes' | 'trafficLights',
+        x: number,
+        y: number,
+    ): { parent: HTMLDivElement; chunk: StaticChunk | null } {
+        if (!this.culling) {
+            const parent =
+                layer === 'roads'
+                    ? this.roadsLayer
+                    : layer === 'lanes'
+                      ? this.lanesLayer
+                      : this.trafficLightsLayer;
+
+            return { parent, chunk: null };
+        }
+
+        const { key, bounds } = getStaticChunkCell(x, y);
+        let chunk = this.staticChunks.get(key);
+
+        if (!chunk) {
+            chunk = {
+                bounds,
+                roads: null,
+                lanes: null,
+                trafficLights: null,
+                roadCount: 0,
+                laneDividerCount: 0,
+                trafficLightCount: 0,
+                visible: true,
+            };
+            this.staticChunks.set(key, chunk);
+        }
+
+        let parent = chunk[layer];
+
+        if (!parent) {
+            parent = this.createLayer('static-chunk');
+            parent.dataset.chunk = key;
+
+            if (!chunk.visible) {
+                parent.style.display = 'none';
+            }
+
+            const layerElement =
+                layer === 'roads'
+                    ? this.roadsLayer
+                    : layer === 'lanes'
+                      ? this.lanesLayer
+                      : this.trafficLightsLayer;
+
+            layerElement.appendChild(parent);
+            chunk[layer] = parent;
+        }
+
+        return { parent, chunk };
+    }
+
+    // Roads and lane dividers are keyed by the road's midpoint, as in the PixiJS renderer.
+    private getRoadParent(
+        layer: 'roads' | 'lanes',
+        road: Road,
+    ): { parent: HTMLDivElement; chunk: StaticChunk | null } {
+        const start = road.getNodeA().getPosition();
+        const end = road.getNodeB().getPosition();
+
+        return this.getStaticParent(
+            layer,
+            (this.offsetX(start.x) + this.offsetX(end.x)) / 2,
+            (this.offsetY(start.y) + this.offsetY(end.y)) / 2,
+        );
+    }
+
+    private readonly handleScroll = (): void => {
+        this.updateStaticChunkVisibility();
+    };
+
+    private getCullViewport(): CullViewport {
+        // The host's size, the same viewport the PixiJS renderer culls against.
+        return {
+            left: this.scene.scrollLeft,
+            top: this.scene.scrollTop,
+            width: Math.max(1, this.container.clientWidth),
+            height: Math.max(1, this.container.clientHeight),
+        };
+    }
+
+    private updateStaticChunkVisibility(): void {
+        if (!this.culling || !this.initialized || this.staticChunks.size === 0) {
+            return;
+        }
+
+        const viewport = this.getCullViewport();
+        let revealed = false;
+
+        for (const chunk of this.staticChunks.values()) {
+            const visible = isStaticChunkVisible(chunk.bounds, viewport);
+
+            if (visible === chunk.visible) {
+                continue;
+            }
+
+            chunk.visible = visible;
+            revealed ||= visible;
+
+            const display = visible ? '' : 'none';
+
+            if (chunk.roads) {
+                chunk.roads.style.display = display;
+            }
+
+            if (chunk.lanes) {
+                chunk.lanes.style.display = display;
+            }
+
+            if (chunk.trafficLights) {
+                chunk.trafficLights.style.display = display;
+            }
+        }
+
+        // Lights in a revealed chunk still show the state from when they were hidden.
+        if (revealed) {
+            this.updateTrafficLights(this.latestTrafficLights);
+        }
+    }
+
+    private renderRoad(road: Road): boolean {
         const start = road.getNodeA().getPosition();
         const end = road.getNodeB().getPosition();
         const dx = end.x - start.x;
@@ -148,7 +432,7 @@ export class DOMRenderer implements Renderer {
         const centerLength = Math.sqrt(dx * dx + dy * dy);
 
         if (centerLength === 0) {
-            return;
+            return false;
         }
 
         const rotation = Math.atan2(dy, dx);
@@ -164,10 +448,18 @@ export class DOMRenderer implements Renderer {
         roadElement.style.height = `${this.roadWidth}px`;
         roadElement.style.transform = `translateY(-50%) rotate(${rotation}rad)`;
 
-        this.roadsLayer.appendChild(roadElement);
+        const { parent, chunk } = this.getRoadParent('roads', road);
+
+        parent.appendChild(roadElement);
+
+        if (chunk) {
+            chunk.roadCount += 1;
+        }
+
+        return true;
     }
 
-    private renderLaneDivider(road: Road): void {
+    private renderLaneDivider(road: Road): boolean {
         const start = road.getNodeA().getPosition();
         const end = road.getNodeB().getPosition();
         const dx = end.x - start.x;
@@ -175,7 +467,7 @@ export class DOMRenderer implements Renderer {
         const length = Math.sqrt(dx * dx + dy * dy);
 
         if (length === 0) {
-            return;
+            return false;
         }
 
         const rotation = Math.atan2(dy, dx);
@@ -186,7 +478,15 @@ export class DOMRenderer implements Renderer {
         divider.style.width = `${length}px`;
         divider.style.transform = `translateY(-50%) rotate(${rotation}rad)`;
 
-        this.lanesLayer.appendChild(divider);
+        const { parent, chunk } = this.getRoadParent('lanes', road);
+
+        parent.appendChild(divider);
+
+        if (chunk) {
+            chunk.laneDividerCount += 1;
+        }
+
+        return true;
     }
 
     private createTrafficLights(states: readonly TrafficLightRenderState[]): void {
@@ -194,17 +494,26 @@ export class DOMRenderer implements Renderer {
         this.trafficLightElements.clear();
         this.trafficLightsStale = false;
 
+        for (const chunk of this.staticChunks.values()) {
+            chunk.trafficLights = null;
+            chunk.trafficLightCount = 0;
+        }
+
         for (const state of states) {
             const elements = this.createTrafficLight(state);
             this.trafficLightElements.set(state.key, elements);
         }
+
+        this.updateStaticChunkVisibility();
     }
 
     private createTrafficLight(state: TrafficLightRenderState): TrafficLightElements {
         const root = this.createElement('traffic-light');
+        const x = this.offsetX(state.position.x);
+        const y = this.offsetY(state.position.y);
 
-        root.style.left = `${this.offsetX(state.position.x)}px`;
-        root.style.top = `${this.offsetY(state.position.y)}px`;
+        root.style.left = `${x}px`;
+        root.style.top = `${y}px`;
 
         const red = this.createElement('traffic-light-lamp');
         red.classList.add('traffic-light-lamp-red');
@@ -224,7 +533,13 @@ export class DOMRenderer implements Renderer {
             root.append(timer);
         }
 
-        this.trafficLightsLayer.appendChild(root);
+        const { parent, chunk } = this.getStaticParent('trafficLights', x, y);
+
+        parent.appendChild(root);
+
+        if (chunk) {
+            chunk.trafficLightCount += 1;
+        }
 
         return {
             root,
@@ -234,6 +549,7 @@ export class DOMRenderer implements Renderer {
             timer,
             lastColor: null,
             lastTimerText: '',
+            chunk,
         };
     }
 
@@ -241,7 +557,8 @@ export class DOMRenderer implements Renderer {
         for (const state of states) {
             const elements = this.trafficLightElements.get(state.key);
 
-            if (!elements) {
+            // A culled light keeps its old state until its chunk is visible again.
+            if (!elements || (elements.chunk !== null && !elements.chunk.visible)) {
                 continue;
             }
 

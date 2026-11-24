@@ -1,6 +1,7 @@
 import type { BenchmarkCurrentMetrics, BenchmarkSnapshot } from '@benchmarking/benchmark-monitor';
 import type { BenchmarkSuiteRunResult } from '@benchmarking/benchmark-suite';
 import type { BenchmarkSuiteConfig } from '@benchmarking/benchmark-suite-config';
+import type { StaticElementCounts } from '@rendering/renderer';
 import type { RendererType } from '@rendering/renderer-factory';
 
 export interface AppElements {
@@ -11,6 +12,7 @@ export interface AppElements {
     columnsInput: HTMLInputElement;
     vehiclesInput: HTMLInputElement;
     domRendererHost: HTMLDivElement;
+    domCullRendererHost: HTMLDivElement;
     pixiWebglRendererHost: HTMLDivElement;
     pixiWebgpuRendererHost: HTMLDivElement;
     benchmarkRecord: HTMLButtonElement;
@@ -90,6 +92,7 @@ export function renderApp(
                 <span>Renderer</span>
                 <select id="renderer-select">
                     <option value="dom">DOM</option>
+                    <option value="dom-cull">DOM (culling)</option>
                     <option value="pixi-webgl">PixiJS WebGL</option>
                     <option value="pixi-webgpu">PixiJS WebGPU</option>
                 </select>
@@ -101,6 +104,7 @@ export function renderApp(
                 <div id="simulation-root" class="simulation-scroll">
                     <div id="simulation-content" class="simulation-content">
                         <div id="dom-renderer-host" class="renderer-host"></div>
+                        <div id="dom-cull-renderer-host" class="renderer-host"></div>
                         <div id="pixi-webgl-renderer-host" class="renderer-host"></div>
                         <div id="pixi-webgpu-renderer-host" class="renderer-host"></div>
                     </div>
@@ -345,6 +349,7 @@ export function renderApp(
         columnsInput: getRequiredElement('#columns-input'),
         vehiclesInput: getRequiredElement('#vehicles-input'),
         domRendererHost: getRequiredElement('#dom-renderer-host'),
+        domCullRendererHost: getRequiredElement('#dom-cull-renderer-host'),
         pixiWebglRendererHost: getRequiredElement('#pixi-webgl-renderer-host'),
         pixiWebgpuRendererHost: getRequiredElement('#pixi-webgpu-renderer-host'),
         benchmarkRecord: getRequiredElement('#benchmark-record'),
@@ -463,6 +468,7 @@ export class BenchmarkUi {
                 ${metric('Memory Peak', formatMemory(snapshot.memoryPeakMb))}
                 ${metric('Vehicles', String(snapshot.vehicleCount))}
                 ${metric('Map', `${snapshot.rows} × ${snapshot.columns}`)}
+                ${metric('Visible Static', formatStaticElements(snapshot.staticElements))}
                 ${metric('CPU Cores', String(environment.logicalProcessors))}
                 ${metric(
                     'Device memory',
@@ -620,7 +626,7 @@ export function renderSuiteRendererOptions(
     config: BenchmarkSuiteConfig,
     isRendererAvailable: (renderer: RendererType) => boolean,
 ): void {
-    container.innerHTML = (['dom', 'pixi-webgl', 'pixi-webgpu'] as RendererType[])
+    container.innerHTML = (['dom', 'dom-cull', 'pixi-webgl', 'pixi-webgpu'] as RendererType[])
         .map((renderer) => {
             const disabled = !isRendererAvailable(renderer);
             const checked = config.renderers.includes(renderer);
@@ -741,6 +747,8 @@ export function getRendererLabel(type: RendererType): string {
     switch (type) {
         case 'dom':
             return 'DOM';
+        case 'dom-cull':
+            return 'DOM (culling)';
         case 'pixi-webgl':
             return 'PixiJS WebGL';
         case 'pixi-webgpu':
@@ -755,6 +763,18 @@ export function metric(label: string, value: string): string {
             <strong class="benchmark-metric-value">${escapeHtml(value)}</strong>
         </div>
     `;
+}
+
+export function formatStaticElements(counts: StaticElementCounts | null): string {
+    if (!counts) {
+        return 'N/A';
+    }
+
+    return (
+        `R ${counts.visibleRoads}/${counts.roads} • ` +
+        `L ${counts.visibleLaneDividers}/${counts.laneDividers} • ` +
+        `TL ${counts.visibleTrafficLights}/${counts.trafficLights}`
+    );
 }
 
 export function formatMemory(value: number | null): string {

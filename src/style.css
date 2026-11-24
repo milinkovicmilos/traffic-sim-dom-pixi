@@ -794,3 +794,11 @@ body {
         flex-direction: column;
     }
 }
+
+.scene-sizer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    visibility: hidden;
+    pointer-events: none;
+}

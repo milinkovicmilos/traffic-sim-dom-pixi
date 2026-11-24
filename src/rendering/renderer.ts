@@ -18,9 +18,19 @@ export interface RenderState {
     vehicles: readonly VehicleState[];
 }
 
+export interface StaticElementCounts {
+    roads: number;
+    laneDividers: number;
+    trafficLights: number;
+    visibleRoads: number;
+    visibleLaneDividers: number;
+    visibleTrafficLights: number;
+}
+
 export interface Renderer {
     initialize(): void | Promise<void>;
     render(state: RenderState): void;
     setTrafficLightTimersVisible(visible: boolean): void;
+    getStaticElementCounts(): StaticElementCounts;
     destroy(): void;
 }

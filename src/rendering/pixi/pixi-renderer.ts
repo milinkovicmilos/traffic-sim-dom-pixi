@@ -16,7 +16,18 @@ import {
 import type { Road } from '@core/map/road';
 import type { RoadMap } from '@core/map/road-map';
 import type { VehicleState } from '@core/vehicles/vehicle-state';
-import type { Renderer, RenderState, TrafficLightRenderState } from '@rendering/renderer';
+import type {
+    Renderer,
+    RenderState,
+    StaticElementCounts,
+    TrafficLightRenderState,
+} from '@rendering/renderer';
+import {
+    getStaticChunkCell,
+    isStaticChunkVisible,
+    type CullViewport,
+    type StaticChunkBounds,
+} from '@rendering/static-chunks';
 import { getWebGlGpuName, getWebGpuGpuName } from '@shared/utils/gpu/gpu-name';
 import './pixi-batcher-patch';
 import { requestWebGpuDevice, WebGpuGpuTimer } from './webgpu-gpu-timer';
@@ -46,15 +57,22 @@ interface TrafficLightRenderObject {
     timer: Text | null;
     lastColor: TrafficLightRenderState['color'] | null;
     lastTimerText: string;
+    chunk: TrafficLightChunk;
 }
 
 interface StaticMapChunk {
     roads: Graphics;
     lanes: Graphics;
-    minX: number;
-    minY: number;
-    maxX: number;
-    maxY: number;
+    bounds: StaticChunkBounds;
+    roadCount: number;
+    laneDividerCount: number;
+}
+
+// Kept apart from StaticMapChunk: lights are rebuilt on their own when timers are toggled.
+interface TrafficLightChunk {
+    container: Container;
+    bounds: StaticChunkBounds;
+    lightCount: number;
 }
 
 interface WebGLTimerExtension {
@@ -93,10 +111,6 @@ const GLOW_INNER_RADIUS = 6;
 const GLOW_OUTER_ALPHA = 0.07;
 const GLOW_MIDDLE_ALPHA = 0.14;
 const GLOW_INNER_ALPHA = 0.24;
-
-const STATIC_CHUNK_SIZE = 2000;
-const STATIC_CHUNK_CULL_MARGIN = 300;
-const ROAD_EXTENDED_MARGIN = 500;
 
 /*
  * We sample one out of every five frames. GPU timer queries are
@@ -158,6 +172,9 @@ export class PixiRenderer implements Renderer {
      * regardless of how many roads exist inside the chunk.
      */
     private readonly staticMapChunks = new Map<string, StaticMapChunk>();
+
+    // One Container per chunk; culling toggles the chunk, not each light.
+    private readonly trafficLightChunks = new Map<string, TrafficLightChunk>();
 
     private mapMinX = 0;
     private mapMinY = 0;
@@ -287,8 +304,6 @@ export class PixiRenderer implements Renderer {
         this.updateTrafficLights(state.trafficLights);
         this.updateVehicles(state.vehicles);
         this.updateCameraTransform();
-        this.updateStaticChunkVisibility();
-        this.updateTrafficLightVisibility();
         this.app.render();
     }
 
@@ -678,8 +693,13 @@ export class PixiRenderer implements Renderer {
         for (const road of roadMap.getRoads()) {
             const chunk = this.getOrCreateStaticChunk(road);
 
-            this.addRoadGeometry(chunk.roads, road);
-            this.addLaneDividerGeometry(chunk.lanes, road);
+            if (this.addRoadGeometry(chunk.roads, road)) {
+                chunk.roadCount += 1;
+            }
+
+            if (this.addLaneDividerGeometry(chunk.lanes, road)) {
+                chunk.laneDividerCount += 1;
+            }
         }
 
         this.updateStaticChunkVisibility();
@@ -693,19 +713,12 @@ export class PixiRenderer implements Renderer {
 
         const midpointY = (this.offsetY(nodeA.y) + this.offsetY(nodeB.y)) / 2;
 
-        const chunkX = Math.floor(midpointX / STATIC_CHUNK_SIZE);
-        const chunkY = Math.floor(midpointY / STATIC_CHUNK_SIZE);
-        const key = `${chunkX}:${chunkY}`;
+        const { key, bounds } = getStaticChunkCell(midpointX, midpointY);
         const existing = this.staticMapChunks.get(key);
 
         if (existing) {
             return existing;
         }
-
-        const minX = chunkX * STATIC_CHUNK_SIZE - ROAD_EXTENDED_MARGIN;
-        const minY = chunkY * STATIC_CHUNK_SIZE - ROAD_EXTENDED_MARGIN;
-        const maxX = (chunkX + 1) * STATIC_CHUNK_SIZE + ROAD_EXTENDED_MARGIN;
-        const maxY = (chunkY + 1) * STATIC_CHUNK_SIZE + ROAD_EXTENDED_MARGIN;
 
         const roads = new Graphics();
         const lanes = new Graphics();
@@ -719,10 +732,9 @@ export class PixiRenderer implements Renderer {
         const chunk: StaticMapChunk = {
             roads,
             lanes,
-            minX,
-            minY,
-            maxX,
-            maxY,
+            bounds,
+            roadCount: 0,
+            laneDividerCount: 0,
         };
 
         this.staticMapChunks.set(key, chunk);
@@ -730,7 +742,7 @@ export class PixiRenderer implements Renderer {
         return chunk;
     }
 
-    private addRoadGeometry(graphics: Graphics, road: Road): void {
+    private addRoadGeometry(graphics: Graphics, road: Road): boolean {
         const start = road.getNodeA().getPosition();
         const end = road.getNodeB().getPosition();
 
@@ -744,7 +756,7 @@ export class PixiRenderer implements Renderer {
         const length = Math.sqrt(dx * dx + dy * dy);
 
         if (length === 0) {
-            return;
+            return false;
         }
 
         const directionX = dx / length;
@@ -773,9 +785,11 @@ export class PixiRenderer implements Renderer {
             color: ROAD_COLOR,
             alpha: 1,
         });
+
+        return true;
     }
 
-    private addLaneDividerGeometry(graphics: Graphics, road: Road): void {
+    private addLaneDividerGeometry(graphics: Graphics, road: Road): boolean {
         const start = road.getNodeA().getPosition();
         const end = road.getNodeB().getPosition();
 
@@ -789,7 +803,7 @@ export class PixiRenderer implements Renderer {
         const length = Math.sqrt(dx * dx + dy * dy);
 
         if (length === 0) {
-            return;
+            return false;
         }
 
         const directionX = dx / length;
@@ -830,24 +844,66 @@ export class PixiRenderer implements Renderer {
             color: LANE_DIVIDER_COLOR,
             alpha: 0.8,
         });
+
+        return true;
+    }
+
+    private getCullViewport(): CullViewport {
+        return {
+            left: -this.cameraX,
+            top: -this.cameraY,
+            width: this.viewportWidth,
+            height: this.viewportHeight,
+        };
     }
 
     private updateStaticChunkVisibility(): void {
-        const visibleMinX = -this.cameraX - STATIC_CHUNK_CULL_MARGIN;
-        const visibleMinY = -this.cameraY - STATIC_CHUNK_CULL_MARGIN;
-        const visibleMaxX = -this.cameraX + this.viewportWidth + STATIC_CHUNK_CULL_MARGIN;
-        const visibleMaxY = -this.cameraY + this.viewportHeight + STATIC_CHUNK_CULL_MARGIN;
+        const viewport = this.getCullViewport();
 
         for (const chunk of this.staticMapChunks.values()) {
-            const visible =
-                chunk.maxX >= visibleMinX &&
-                chunk.minX <= visibleMaxX &&
-                chunk.maxY >= visibleMinY &&
-                chunk.minY <= visibleMaxY;
+            const visible = isStaticChunkVisible(chunk.bounds, viewport);
 
             chunk.roads.visible = visible;
             chunk.lanes.visible = visible;
         }
+
+        for (const chunk of this.trafficLightChunks.values()) {
+            chunk.container.visible = isStaticChunkVisible(chunk.bounds, viewport);
+        }
+    }
+
+    getStaticElementCounts(): StaticElementCounts {
+        const counts: StaticElementCounts = {
+            roads: 0,
+            laneDividers: 0,
+            trafficLights: 0,
+            visibleRoads: 0,
+            visibleLaneDividers: 0,
+            visibleTrafficLights: 0,
+        };
+
+        for (const chunk of this.staticMapChunks.values()) {
+            counts.roads += chunk.roadCount;
+            counts.laneDividers += chunk.laneDividerCount;
+
+            if (chunk.roads.visible) {
+                counts.visibleRoads += chunk.roadCount;
+            }
+
+            if (chunk.lanes.visible) {
+                counts.visibleLaneDividers += chunk.laneDividerCount;
+            }
+        }
+
+        for (const chunk of this.trafficLightChunks.values()) {
+            counts.trafficLights += chunk.lightCount;
+
+            if (chunk.container.visible) {
+                counts.visibleTrafficLights += chunk.lightCount;
+            }
+        }
+
+        return counts;
     }
 
     private buildTrafficLights(states: readonly TrafficLightRenderState[]): void {
@@ -858,6 +914,7 @@ export class PixiRenderer implements Renderer {
         }
 
         this.trafficLightElements.clear();
+        this.trafficLightChunks.clear();
         this.trafficLightsStale = false;
 
         for (const state of states) {
@@ -865,14 +922,39 @@ export class PixiRenderer implements Renderer {
 
             this.trafficLightElements.set(state.key, elements);
 
-            this.trafficLightsLayer.addChild(elements.root);
+            elements.chunk.container.addChild(elements.root);
+            elements.chunk.lightCount += 1;
         }
+
+        this.updateStaticChunkVisibility();
+    }
+
+    private getOrCreateTrafficLightChunk(x: number, y: number): TrafficLightChunk {
+        const { key, bounds } = getStaticChunkCell(x, y);
+        const existing = this.trafficLightChunks.get(key);
+
+        if (existing) {
+            return existing;
+        }
+
+        const container = new Container();
+
+        container.label = `traffic-lights-chunk-${key}`;
+        this.trafficLightsLayer.addChild(container);
+
+        const chunk: TrafficLightChunk = { container, bounds, lightCount: 0 };
+
+        this.trafficLightChunks.set(key, chunk);
+
+        return chunk;
     }
 
     private createTrafficLight(state: TrafficLightRenderState): TrafficLightRenderObject {
         const root = new Container();
+        const x = this.offsetX(state.position.x);
+        const y = this.offsetY(state.position.y);
 
-        root.position.set(this.offsetX(state.position.x), this.offsetY(state.position.y));
+        root.position.set(x, y);
 
         const housing = new Sprite(this.trafficLightHousingTexture);
 
@@ -921,6 +1003,7 @@ export class PixiRenderer implements Renderer {
             timer,
             lastColor: null,
             lastTimerText: '',
+            chunk: this.getOrCreateTrafficLightChunk(x, y),
         };
 
         this.updateTrafficLightObject(object, state);
@@ -998,7 +1081,8 @@ export class PixiRenderer implements Renderer {
         for (const state of states) {
             const elements = this.trafficLightElements.get(state.key);
 
-            if (!elements) {
+            // A culled light keeps its old state until its chunk is visible again.
+            if (!elements || !elements.chunk.container.visible) {
                 continue;
             }
 
@@ -1145,7 +1229,6 @@ export class PixiRenderer implements Renderer {
         this.clampCamera();
         this.updateCameraTransform();
         this.updateStaticChunkVisibility();
-        this.updateTrafficLightVisibility();
     }
 
     private clampCamera(): void {
@@ -1157,21 +1240,6 @@ export class PixiRenderer implements Renderer {
 
         this.cameraX = Math.min(0, Math.max(minX, this.cameraX));
         this.cameraY = Math.min(0, Math.max(minY, this.cameraY));
-    }
-
-    private updateTrafficLightVisibility(): void {
-        const left = -this.cameraX;
-        const top = -this.cameraY;
-        const right = left + this.viewportWidth;
-        const bottom = top + this.viewportHeight;
-
-        for (const elements of this.trafficLightElements.values()) {
-            const x = elements.root.x;
-            const y = elements.root.y;
-
-            elements.root.visible =
-                x >= left - 50 && x <= right + 50 && y >= top - 50 && y <= bottom + 50;
-        }
     }
 
     private bindPointerEvents(): void {
@@ -1225,7 +1293,6 @@ export class PixiRenderer implements Renderer {
         this.clampCamera();
         this.updateCameraTransform();
         this.updateStaticChunkVisibility();
-        this.updateTrafficLightVisibility();
     };
 
     private readonly handlePointerUp = (event: PointerEvent): void => {
@@ -1266,6 +1333,7 @@ export class PixiRenderer implements Renderer {
         this.trafficLightElements.clear();
         this.vehicleParticles.length = 0;
         this.staticMapChunks.clear();
+        this.trafficLightChunks.clear();
 
         if (this.vehicleTexture) {
             this.vehicleTexture.destroy(true);
