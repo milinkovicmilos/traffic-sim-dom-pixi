@@ -1,6 +1,28 @@
 # traffic-sim-dom-pixi
 
-A traffic simulation on a grid of intersections, rendered three ways: DOM, PixiJS WebGL and PixiJS WebGPU. The built-in benchmark measures all three renderers on the same scenarios and exports the results as JSON.
+A traffic simulation on a grid of intersections, rendered four ways: DOM, DOM with culling, PixiJS WebGL and PixiJS WebGPU. The built-in benchmark measures all four renderers on the same scenarios and exports the results as JSON.
+
+## Renderers
+
+| Renderer | ID | Description |
+|---|---|---|
+| DOM | `dom` | One element per road, lane divider, traffic light and vehicle. Nothing is culled. |
+| DOM (culling) | `dom-cull` | Same elements as `dom`, but static elements outside the viewport are hidden by the same rule as in PixiJS (see below). |
+| PixiJS WebGL | `pixi-webgl` | PixiJS on WebGL. Static elements are culled by chunks, vehicles are drawn in one `ParticleContainer`. |
+| PixiJS WebGPU | `pixi-webgpu` | Same as `pixi-webgl`, on WebGPU. |
+
+### Culling
+
+`dom-cull` and both PixiJS renderers cull static elements by the same rule, from the shared code in `src/rendering/static-chunks.ts`, so they draw the same set:
+
+- The scene is split into 2000 × 2000 px chunks. A road and its lane divider belong to the chunk that holds the road's midpoint. A traffic light belongs to the chunk that holds its position.
+- A chunk's bounds are its cell widened by 500 px on every side. A chunk is visible when its bounds overlap the viewport widened by a 300 px margin. The viewport is the renderer host's size, scrolled (DOM) or moved by the camera (PixiJS).
+- Only static elements are culled: roads, lane dividers and traffic lights. Vehicles are never culled, in any renderer.
+- A hidden chunk is skipped as a whole. In `dom-cull` each layer has one wrapper element per chunk that gets `display: none`, which takes its elements out of layout and paint. In PixiJS each chunk is one `Graphics` (roads, dividers) or `Container` (lights) with `visible = false`.
+- While a light is hidden, its lamp color and countdown are not updated. They catch up as soon as its chunk becomes visible again, before it is drawn.
+- Visibility is recomputed only when the scene is scrolled (DOM) or dragged (PixiJS), the viewport is resized, or the scene is rebuilt. It is not recomputed every frame. The scene does not move during a measurement, so this only matters when you use the app by hand.
+
+`snapshot.staticElements` in the JSON records how many static elements were visible, so you can confirm that `dom-cull` and PixiJS drew the same set.
 
 ## Running the app
 
@@ -42,13 +64,14 @@ Add `?noTimers=1` to the URL (e.g. `http://localhost:5173/traffic-sim-dom-pixi/?
 
 ### Run numbers and renderer order
 
-Measuring the renderers always in the same order could bias the results (JIT warmup, caches, heat, memory), so the standard suite rotates the order between runs. Run `k` starts with renderer `(k - 1) mod 3`:
+Measuring the renderers always in the same order could bias the results (JIT warmup, caches, heat, memory), so the standard suite rotates the order between runs. Run `k` starts with renderer `(k - 1) mod 4`:
 
 | Run | Order |
 |---|---|
-| 1, 4, 7, … | DOM → WebGL → WebGPU |
-| 2, 5, 8, … | WebGL → WebGPU → DOM |
-| 3, 6, 9, … | WebGPU → DOM → WebGL |
+| 1, 5, 9, … | DOM → DOM-cull → WebGL → WebGPU |
+| 2, 6, 10, … | DOM-cull → WebGL → WebGPU → DOM |
+| 3, 7, 11, … | WebGL → WebGPU → DOM → DOM-cull |
+| 4, 8, 12, … | WebGPU → DOM → DOM-cull → WebGL |
 
 The run number is kept in the browser's local storage, so it survives closing the browser between runs. It goes up by one after a suite that ends without `failed` results (`skipped` ones are fine). A run with failures keeps its number, so repeating it repeats the same order. The counter starts over at 1 when the app version (`codeVersion`) changes, and **Reset Runs** starts it over manually, e.g. to record a series again. The counter is per browser, since each browser has its own storage.
 
@@ -63,17 +86,17 @@ The standard suite is defined in `src/benchmarking/benchmark-suite-config.ts`:
 | `V` (vehicle count scaling) | 30×30 | 100, 250, 500, 1000, 2000, 4000, 8000, 16000 | on |
 | `M` (map size scaling) | 10×10, 20×20, 40×40, 60×60 | 1000 | on |
 | `S` (small scenarios) | 5×5, 10×10 | 100 | off |
-| `P` (vehicle count scaling on a small map) | 10×10 | 100, 250, 500 | off |
+| `P` (vehicle count scaling on a small map) | 10×10 | 25, 50, 100, 250, 500 | off |
 
 "Timers off" means the traffic lights are drawn and change color, but without the countdown text. Text is expensive to render and would dominate small scenes, so without it groups `S` and `P` mostly measure the cost of drawing the scene's objects.
 
 
-Each of the 17 scenarios runs on all three renderers, for **51 measurements**. A full suite takes about 13 minutes.
+Each of the 19 scenarios runs on all four renderers, for **76 measurements**. A full suite takes about 19 minutes.
 
 One suite run goes like this:
 
 1. It measures `requestAnimationFrame` intervals for 2 s to estimate the display refresh rate.
-2. For each scenario, it computes the simulation once up front, at a fixed step of 60 states per second with the fixed seed `123456789`. All three renderers then replay the same states, so they draw identical traffic.
+2. For each scenario, it computes the simulation once up front, at a fixed step of 60 states per second with the fixed seed `123456789`. All four renderers then replay the same states, so they draw identical traffic.
 3. Each renderer gets 3 s of warmup followed by 10 s of measurement, in the order of the current run (see above). A renderer that has drawn fewer than 60 frames by then (e.g. DOM on the large maps) keeps recording until it has 60, but for at most 30 s in total. The precomputed states cover that longest case, so the traffic keeps moving. `snapshot.durationMs` and `snapshot.frameCount` show what was actually recorded; fewer than 60 frames means the renderer stayed under 2 FPS for the whole 30 s.
 4. At the end, the previous scenario and renderer are restored.
 
@@ -96,8 +119,8 @@ The file is an array of results, one per scenario and renderer combination, orde
   {
     "setup": { "id": "V-30x30-100", "name": "30x30 • 100 vehicles", "rows": 30, "columns": 30, "vehicleCount": 100, "trafficLightTimers": true },
     "renderer": "pixi-webgl",
-    "rendererOrder": ["dom", "pixi-webgl", "pixi-webgpu"],
-    "rendererPosition": 2,
+    "rendererOrder": ["dom", "dom-cull", "pixi-webgl", "pixi-webgpu"],
+    "rendererPosition": 3,
     "status": "complete",
     "snapshot": { /* metrics, see below */ },
     "trace": { "stateHash": "ed12fa28", "statesPerSecond": 60, "stateCount": 2101, "averageStepTime": 0.14, "p95StepTime": 1 },
@@ -106,8 +129,8 @@ The file is an array of results, one per scenario and renderer combination, orde
   {
     "setup": { "id": "V-30x30-100", /* ... */ },
     "renderer": "pixi-webgpu",
-    "rendererOrder": ["dom", "pixi-webgl", "pixi-webgpu"],
-    "rendererPosition": 3,
+    "rendererOrder": ["dom", "dom-cull", "pixi-webgl", "pixi-webgpu"],
+    "rendererPosition": 4,
     "status": "skipped",
     "snapshot": null,
     "reason": "pixi-webgpu is unavailable."
@@ -120,7 +143,7 @@ The file is an array of results, one per scenario and renderer combination, orde
 | Field | Type | Description |
 |---|---|---|
 | `setup` | object | The scenario: `id`, `name`, `rows`, `columns`, `vehicleCount`, `trafficLightTimers`. Standard scenario IDs have the form `{group}-{rows}x{columns}-{vehicles}`, with a `-notimers` suffix when `trafficLightTimers` is `false`. |
-| `renderer` | string | `dom`, `pixi-webgl` or `pixi-webgpu` |
+| `renderer` | string | `dom`, `dom-cull`, `pixi-webgl` or `pixi-webgpu` |
 | `rendererOrder` | string[] | The order the renderers ran in within every scenario of this suite run |
 | `rendererPosition` | number | This renderer's place in `rendererOrder`, starting at 1 |
 | `status` | string | `complete`: measured; `skipped`: renderer unavailable; `failed`: error during preparation or measurement |
@@ -147,11 +170,21 @@ All times are in milliseconds. `average*` is the mean and `p95*` the 95th percen
 | `averageSimulationTime`, `p95SimulationTime` | Duration of one simulation step. In a suite these are copied from `trace` (`averageStepTime`, `p95StepTime`), because frames only replay precomputed states during the measurement |
 | `averageRenderTime`, `p95RenderTime` | CPU time the renderer spends drawing a frame |
 | `averageBrowserRenderTime`, `p95BrowserRenderTime` | Browser work after the callback (style, layout, paint) until the next task. `null` if there were no samples |
-| `averageGpuTime`, `p95GpuTime`, `peakGpuTime` | GPU time from GPU timer queries. `null` when the renderer or browser does not support them (always for DOM) |
+| `averageGpuTime`, `p95GpuTime`, `peakGpuTime` | GPU time from GPU timer queries. `null` when the renderer or browser does not support them (always for both DOM renderers) |
 | `averageMainThreadUtilization`, `peakMainThreadUtilization` | (simulation + render) / `requestAnimationFrame` interval, as a percentage (0–100). Does not include the browser's own work |
 | `memoryStartMb`, `memoryEndMb`, `memoryPeakMb` | JS heap (`performance.memory`). Chromium browsers only, otherwise `null` |
 | `vehicleCount`, `rows`, `columns` | Actual scenario size during the measurement |
+| `staticElements` | Static element counts when the measurement stopped, see below |
 | `environment` | Machine information, see below |
+
+### `snapshot.staticElements`
+
+| Field | Description |
+|---|---|
+| `roads`, `laneDividers`, `trafficLights` | Total number of each static element in the scene |
+| `visibleRoads`, `visibleLaneDividers`, `visibleTrafficLights` | How many of them were not culled (see [Culling](#culling)) |
+
+`dom` does not cull, so its visible counts equal the totals. For `dom-cull`, `pixi-webgl` and `pixi-webgpu`, the visible counts match whenever the viewport (`environment.viewportWidth`/`Height`) is the same.
 
 ### `snapshot.environment`
 
@@ -162,8 +195,8 @@ All times are in milliseconds. `average*` is the mean and `p95*` the 95th percen
 | `userAgent` | Browser user agent |
 | `screenWidth`, `screenHeight`, `devicePixelRatio` | Screen |
 | `viewportWidth`, `viewportHeight` | Size of the simulation area in CSS pixels |
-| `gpuName` | GPU name reported by the renderer's own WebGL / WebGPU context. DOM has no context of its own, so its name comes from a separate WebGL probe. `null` when the context does not report a name, e.g. WebGPU in Firefox, which returns empty adapter info. |
-| `pixiRendererName` | Renderer PixiJS actually created (`app.renderer.name`): `webgl` or `webgpu`; `null` for DOM. |
+| `gpuName` | GPU name reported by the renderer's own WebGL / WebGPU context. The DOM renderers have no context of their own, so their name comes from a separate WebGL probe. `null` when the context does not report a name, e.g. WebGPU in Firefox, which returns empty adapter info. |
+| `pixiRendererName` | Renderer PixiJS actually created (`app.renderer.name`): `webgl` or `webgpu`; `null` for both DOM renderers. |
 | `refreshRateEstimate` | Estimated display refresh rate in Hz, measured at the start of the suite |
 
 ### `trace`

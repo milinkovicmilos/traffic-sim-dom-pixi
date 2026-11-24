@@ -4,10 +4,11 @@ import { DOMRenderer, type DOMRendererOptions } from './dom/dom-renderer';
 
 import { PixiRenderer, type PixiRendererOptions } from './pixi/pixi-renderer';
 
-export type RendererType = 'dom' | 'pixi-webgl' | 'pixi-webgpu';
+export type RendererType = 'dom' | 'dom-cull' | 'pixi-webgl' | 'pixi-webgpu';
 
 export interface RendererOptions {
     dom: DOMRendererOptions;
+    domCull: DOMRendererOptions;
     pixiWebgl: PixiRendererOptions;
     pixiWebgpu: PixiRendererOptions;
 }
@@ -15,7 +16,10 @@ export interface RendererOptions {
 export function createRenderer(type: RendererType, options: RendererOptions): Renderer {
     switch (type) {
         case 'dom':
-            return new DOMRenderer(options.dom);
+            return new DOMRenderer({ ...options.dom, culling: false });
+
+        case 'dom-cull':
+            return new DOMRenderer({ ...options.domCull, culling: true });
 
         case 'pixi-webgl':
             return new PixiRenderer({

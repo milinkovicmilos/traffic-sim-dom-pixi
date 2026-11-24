@@ -20,7 +20,7 @@ const SMALL_GROUP_VEHICLE_COUNT = 100;
 
 // P: vehicle count scaling on a small map, without traffic-light timers.
 const SMALL_MAP_GROUP_SIZE = 10;
-const SMALL_MAP_GROUP_COUNTS = [100, 250, 500];
+const SMALL_MAP_GROUP_COUNTS = [25, 50, 100, 250, 500];
 
 export interface BenchmarkSuiteConfig {
     id: string;
@@ -55,8 +55,8 @@ function createStandardSetup(
 /*
  * Rotates the renderer order between repeated runs, so no renderer always runs first
  * or last (JIT warmup, caches, heat and memory build up over a suite run).
- * Run k (1-based) starts with renderer (k - 1) mod n: run 1 DOM, WebGL, WebGPU;
- * run 2 WebGL, WebGPU, DOM; run 3 WebGPU, DOM, WebGL; run 4 starts over.
+ * Run k (1-based) starts with renderer (k - 1) mod n: run 1 DOM, DOM-cull, WebGL, WebGPU;
+ * run 2 DOM-cull, WebGL, WebGPU, DOM; and so on, run 5 starts over.
  */
 export function rotateRenderers(
     renderers: readonly RendererType[],
@@ -75,7 +75,7 @@ export const standardBenchmarkSuite: BenchmarkSuiteConfig = {
     durationMs: 10000,
     minFrameCount: MIN_RECORDED_FRAMES,
     maxDurationMs: MAX_RECORDING_MS,
-    renderers: ['dom', 'pixi-webgl', 'pixi-webgpu'],
+    renderers: ['dom', 'dom-cull', 'pixi-webgl', 'pixi-webgpu'],
     setups: [
         ...VEHICLE_GROUP_COUNTS.map((vehicleCount) =>
             createStandardSetup('V', VEHICLE_GROUP_MAP_SIZE, vehicleCount),
